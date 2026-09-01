@@ -1,6 +1,10 @@
+using FluentValidation;
 using MusicReviews.Api.Infrastructure;
+using MusicReviews.Application.Auth.Validators;
+using MusicReviews.Application.Common.Interfaces;
 using MusicReviews.Infrastructure;
 using MusicReviews.Infrastructure.Persistence;
+using MusicReviews.Infrastructure.Persistence.Seed;
 using Scalar.AspNetCore;
 using Serilog;
 
@@ -24,7 +28,17 @@ try
     // ---- Servicios -------------------------------------------------------
     builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
 
-    builder.Services.AddControllers();
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+    builder.Services.AddApiRateLimiting();
+
+    // Registra todos los validadores del assembly de Application.
+    builder.Services.AddValidatorsFromAssemblyContaining<RegisterRequestValidator>();
+
+    builder.Services.AddControllers(options =>
+    {
+        options.Filters.Add<ValidationFilter>();
+    });
 
     // Respuestas de error consistentes en formato ProblemDetails (RFC 9457).
     builder.Services.AddProblemDetails(options =>
@@ -38,7 +52,10 @@ try
 
     builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
-    builder.Services.AddOpenApi();
+    builder.Services.AddOpenApi(options =>
+    {
+        options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+    });
 
     var app = builder.Build();
 
@@ -50,6 +67,12 @@ try
 
     app.UseSerilogRequestLogging();
 
+    // El frontend se sirve desde wwwroot, en el mismo origen que la Api: sin CORS,
+    // sin segundo proceso, sin paso de build. UseDefaultFiles hace que "/" resuelva
+    // a index.html; va antes que UseStaticFiles porque solo reescribe la ruta.
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+
     if (app.Environment.IsDevelopment())
     {
         app.MapOpenApi();
@@ -58,9 +81,22 @@ try
             .WithTheme(ScalarTheme.Purple));
 
         await DatabaseInitializer.MigrateAsync(app.Services);
+        await IdentitySeeder.SeedAsync(app.Services);
+    }
+    else
+    {
+        // Fuera de desarrollo el perfil siempre expone HTTPS; en local el perfil http
+        // no tiene puerto seguro al que redirigir y el middleware solo loguea un warning.
+        app.UseHttpsRedirection();
+        app.UseHsts();
     }
 
-    app.UseHttpsRedirection();
+    // Despues de la autenticacion: asi el limitador puede particionar por usuario
+    // y no castigar a todos los que comparten una IP.
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    app.UseRateLimiter();
 
     app.MapControllers();
 

@@ -5,12 +5,17 @@ namespace MusicReviews.Domain.Entities;
 /// que arma el hilo anidado: null = comentario de primer nivel, con valor = respuesta.
 /// </summary>
 /// <remarks>
-/// Dos decisiones que importan para el armado del arbol (ver seccion 5 de la spec):
+/// Tres decisiones que importan para el armado del arbol (ver seccion 5 de la spec):
 /// <list type="bullet">
 /// <item><description>
 /// Todo comentario guarda <see cref="ReviewId"/>, incluso las respuestas anidadas a
 /// cualquier profundidad. Esa denormalizacion es lo que permite traer el hilo completo
 /// con un unico <c>WHERE ReviewId = X</c>, sin recursion en la base.
+/// </description></item>
+/// <item><description>
+/// <see cref="Depth"/> se calcula al insertar (<c>padre.Depth + 1</c>) y no se recalcula:
+/// permite aplicar el limite de anidamiento sin subir por la cadena de padres, y deja
+/// preparada la paginacion por niveles.
 /// </description></item>
 /// <item><description>
 /// El borrado es logico (<see cref="IsDeleted"/>), no fisico. Borrar un nodo intermedio
@@ -24,6 +29,13 @@ public class Comment
 {
     public const int TextMaxLength = 5_000;
 
+    /// <summary>
+    /// Profundidad maxima de anidamiento. No es una restriccion tecnica: el armado del
+    /// arbol es iterativo y soporta cualquier profundidad. Es un limite de producto,
+    /// porque a partir de cierto nivel un hilo deja de ser legible.
+    /// </summary>
+    public const int MaxDepth = 10;
+
     public int Id { get; set; }
 
     public int ReviewId { get; set; }
@@ -35,6 +47,9 @@ public class Comment
     /// <summary>Null para comentarios de primer nivel.</summary>
     public int? ParentCommentId { get; set; }
     public Comment? ParentComment { get; set; }
+
+    /// <summary>0 para comentarios de primer nivel; <c>padre.Depth + 1</c> para respuestas.</summary>
+    public int Depth { get; set; }
 
     public string Text { get; set; } = null!;
 

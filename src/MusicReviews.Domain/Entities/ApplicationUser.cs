@@ -25,4 +25,5 @@ public class ApplicationUser : IdentityUser<Guid>
     public ICollection<Comment> Comments { get; set; } = [];
     public ICollection<Like> Likes { get; set; } = [];
     public ICollection<FavoriteArtist> FavoriteArtists { get; set; } = [];
+    public ICollection<RefreshToken> RefreshTokens { get; set; } = [];
 }

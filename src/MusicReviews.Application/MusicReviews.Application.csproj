@@ -4,4 +4,8 @@
     <ProjectReference Include="..\MusicReviews.Domain\MusicReviews.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+
 </Project>

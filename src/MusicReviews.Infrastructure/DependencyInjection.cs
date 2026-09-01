@@ -1,14 +1,42 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using MusicReviews.Application.Admin;
+using MusicReviews.Application.Auth;
+using MusicReviews.Application.Comments;
+using MusicReviews.Application.Likes;
+using MusicReviews.Application.Reviews;
+using MusicReviews.Application.Users;
+using MusicReviews.Domain.Constants;
+using MusicReviews.Domain.Entities;
+using MusicReviews.Infrastructure.Admin;
+using MusicReviews.Infrastructure.Catalog;
+using MusicReviews.Infrastructure.Comments;
+using MusicReviews.Infrastructure.Identity;
+using MusicReviews.Infrastructure.Likes;
 using MusicReviews.Infrastructure.Persistence;
+using MusicReviews.Infrastructure.Reviews;
+using MusicReviews.Infrastructure.Users;
 
 namespace MusicReviews.Infrastructure;
 
 /// <summary>
 /// Punto unico de registro de la capa de infraestructura.
-/// La capa Api no conoce Npgsql ni EF Core: solo llama a <c>AddInfrastructure</c>.
+/// La capa Api no conoce Npgsql, EF Core ni la configuracion de JWT: solo llama a
+/// <c>AddInfrastructure</c>.
 /// </summary>
+/// <remarks>
+/// Regla que se sigue en todo este archivo: <b>nada lee la configuracion al registrar
+/// servicios</b>. Los valores se toman siempre desde el contenedor, en el momento en que
+/// el servicio se construye. Leerlos antes captura una foto de la configuracion que
+/// puede quedar desactualizada si se agrega una fuente despues —lo que hace
+/// <c>WebApplicationFactory</c> en los tests— y el sintoma es dificil de rastrear:
+/// la app termina firmando tokens con una clave y validandolos con otra, o escribiendo
+/// en una base distinta de la configurada.
+/// </remarks>
 public static class DependencyInjection
 {
     public const string DefaultConnectionName = "DefaultConnection";
@@ -18,19 +46,36 @@ public static class DependencyInjection
         IConfiguration configuration,
         bool isDevelopment)
     {
-        var connectionString = configuration.GetConnectionString(DefaultConnectionName)
-            ?? throw new InvalidOperationException(
-                $"Falta la cadena de conexion '{DefaultConnectionName}'. " +
-                "Definila en appsettings.Development.json o en la variable de entorno " +
-                $"ConnectionStrings__{DefaultConnectionName}.");
+        services.TryAddSingleton(TimeProvider.System);
 
-        services.AddDbContext<AppDbContext>(options =>
+        services
+            .AddPersistence(isDevelopment)
+            .AddIdentityServices()
+            .AddJwtAuthentication(configuration)
+            .AddCatalog(configuration)
+            .AddApplicationServices();
+
+        return services;
+    }
+
+    private static IServiceCollection AddPersistence(this IServiceCollection services, bool isDevelopment)
+    {
+        // La cadena de conexion se resuelve desde el proveedor, no desde la
+        // IConfiguration capturada al registrar: ver el comentario de la clase.
+        services.AddDbContext<AppDbContext>((serviceProvider, options) =>
         {
+            var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+
+            var connectionString = configuration.GetConnectionString(DefaultConnectionName)
+                ?? throw new InvalidOperationException(
+                    $"Falta la cadena de conexion '{DefaultConnectionName}'. " +
+                    "Definila en appsettings.Development.json o en la variable de entorno " +
+                    $"ConnectionStrings__{DefaultConnectionName}.");
+
             options.UseNpgsql(connectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
 
-                // Reintentos ante fallos transitorios de red/conexion.
                 npgsql.EnableRetryOnFailure(
                     maxRetryCount: 3,
                     maxRetryDelay: TimeSpan.FromSeconds(5),
@@ -47,4 +92,82 @@ public static class DependencyInjection
 
         return services;
     }
+
+    private static IServiceCollection AddIdentityServices(this IServiceCollection services)
+    {
+        // AddIdentityCore (no AddIdentity): la Api es stateless y autentica por JWT.
+        // AddIdentity registraria ademas el esquema de cookies y lo dejaria como esquema
+        // por defecto, que es la causa clasica de que un endpoint protegido responda con
+        // un redirect a /Account/Login en vez de un 401.
+        services
+            .AddIdentityCore<ApplicationUser>(options =>
+            {
+                options.User.RequireUniqueEmail = true;
+
+                options.Password.RequiredLength = 8;
+                options.Password.RequireDigit = true;
+                options.Password.RequireLowercase = true;
+                options.Password.RequireUppercase = true;
+                options.Password.RequireNonAlphanumeric = false;
+
+                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+                options.Lockout.MaxFailedAccessAttempts = 5;
+                options.Lockout.AllowedForNewUsers = true;
+            })
+            .AddRoles<ApplicationRole>()
+            .AddEntityFrameworkStores<AppDbContext>()
+            .AddDefaultTokenProviders();
+
+        return services;
+    }
+
+    private static IServiceCollection AddJwtAuthentication(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // ValidateOnStart + DataAnnotations: si falta la clave o es mas corta que lo que
+        // exige HMAC-SHA256, la aplicacion no arranca en vez de emitir tokens inseguros
+        // en silencio.
+        services
+            .AddOptions<JwtOptions>()
+            .Bind(configuration.GetSection(JwtOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services
+            .AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer();
+
+        // Los TokenValidationParameters se arman desde IOptions<JwtOptions>, la misma
+        // instancia que usa TokenService para firmar. Ver ConfigureJwtBearerOptions.
+        services.ConfigureOptions<ConfigureJwtBearerOptions>();
+
+        services.AddAuthorizationBuilder()
+            .AddPolicy(AuthPolicies.RequireAdmin, policy => policy.RequireRole(AppRoles.Admin));
+
+        return services;
+    }
+
+    private static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    {
+        services.AddScoped<ITokenService, TokenService>();
+        services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IReviewService, ReviewService>();
+        services.AddScoped<ICommentService, CommentService>();
+        services.AddScoped<ILikeService, LikeService>();
+        services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IAdminService, AdminService>();
+
+        return services;
+    }
+}
+
+/// <summary>Nombres de las politicas de autorizacion.</summary>
+public static class AuthPolicies
+{
+    public const string RequireAdmin = "RequireAdmin";
 }

@@ -29,3 +29,9 @@ dotnet_style_readonly_field = true:warning
 
 # Nullability
 dotnet_diagnostic.CS8618.severity = warning
+
+# Las migraciones las genera EF Core: no tiene sentido exigirles el estilo del proyecto.
+[**/Migrations/*.cs]
+generated_code = true
+dotnet_diagnostic.IDE0161.severity = none
+dotnet_diagnostic.CS1591.severity = none

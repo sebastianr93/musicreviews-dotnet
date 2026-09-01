@@ -23,6 +23,10 @@ public class CommentConfiguration : IEntityTypeConfiguration<Comment>
             .IsRequired()
             .HasDefaultValue(false);
 
+        builder.Property(c => c.Depth)
+            .IsRequired()
+            .HasDefaultValue(0);
+
         // ---------------------------------------------------------------------
         // Indices que sostienen el armado del arbol en una sola query.
         // El hilo completo se trae con WHERE "ReviewId" = @id ORDER BY "CreatedAt",
