@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: musicreviews-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: musicreviews
+      POSTGRES_PASSWORD: musicreviews_dev
+      POSTGRES_DB: musicreviews
+    ports:
+      - "5432:5432"
+    volumes:
+      - musicreviews-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U musicreviews -d musicreviews"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: musicreviews-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: dev@musicreviews.local
+      PGADMIN_DEFAULT_PASSWORD: musicreviews_dev
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - musicreviews-pgadmin:/var/lib/pgadmin
+
+volumes:
+  musicreviews-pgdata:
+  musicreviews-pgadmin:

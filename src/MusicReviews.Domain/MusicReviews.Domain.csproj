@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    El Domain no referencia EF Core ni ningun proyecto de infraestructura.
+    La unica dependencia externa es Microsoft.Extensions.Identity.Stores, que aporta
+    IdentityUser<TKey> / IdentityRole<TKey>: son POCOs de abstraccion, no persistencia.
+    Esto permite que ApplicationUser sea una entidad del dominio con navegaciones reales
+    (Review.User, Comment.User) en vez de tener que hacer joins manuales en cada query.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Identity.Stores" />
+  </ItemGroup>
+
+</Project>
