@@ -18,7 +18,11 @@ const routes = [
 ];
 
 async function render() {
-    const path = location.hash.replace(/^#/, '') || '/';
+    // La query string va DESPUES del hash (#/?q=...), asi que forma parte de
+    // location.hash y hay que separarla antes de comparar contra las rutas.
+    // Sin esto, "#/?q=Thriller" no matchea "/" y todo termina en "no encontrado".
+    const [path, queryString] = splitHash();
+    const params = new URLSearchParams(queryString);
 
     for (const [pattern, view] of routes) {
         const match = pattern.exec(path);
@@ -27,7 +31,7 @@ async function render() {
             clear(main).append(spinner());
 
             try {
-                const content = await view(...match.slice(1).map(decodeURIComponent));
+                const content = await view(...match.slice(1).map(decodeURIComponent), params);
                 clear(main).append(content);
             } catch (error) {
                 clear(main).append(errorBox(error));
@@ -43,6 +47,18 @@ async function render() {
 
 function go(path) {
     location.hash = path;
+}
+
+/** Separa el hash en ruta y query string: "#/album/x?y=1" -> ["/album/x", "y=1"]. */
+function splitHash() {
+    const raw = location.hash.replace(/^#/, '');
+    const index = raw.indexOf('?');
+
+    if (index === -1) {
+        return [raw || '/', ''];
+    }
+
+    return [raw.slice(0, index) || '/', raw.slice(index + 1)];
 }
 
 // ---------------------------------------------------------------- navegacion
@@ -74,8 +90,7 @@ function renderNav() {
 
 // ---------------------------------------------------------------- busqueda
 
-async function viewSearch() {
-    const params = new URLSearchParams(location.hash.split('?')[1] ?? '');
+async function viewSearch(params) {
     const query = params.get('q') ?? '';
     const mode = params.get('mode') === 'artists' ? 'artists' : 'albums';
 
