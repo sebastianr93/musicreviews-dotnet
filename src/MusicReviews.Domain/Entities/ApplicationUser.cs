@@ -26,4 +26,13 @@ public class ApplicationUser : IdentityUser<Guid>
     public ICollection<Like> Likes { get; set; } = [];
     public ICollection<FavoriteArtist> FavoriteArtists { get; set; } = [];
     public ICollection<RefreshToken> RefreshTokens { get; set; } = [];
+
+    /// <summary>Usuarios a los que este usuario sigue.</summary>
+    public ICollection<UserFollow> Following { get; set; } = [];
+
+    /// <summary>Usuarios que siguen a este usuario.</summary>
+    public ICollection<UserFollow> Followers { get; set; } = [];
+
+    /// <summary>Avisos dirigidos a este usuario.</summary>
+    public ICollection<Notification> Notifications { get; set; } = [];
 }

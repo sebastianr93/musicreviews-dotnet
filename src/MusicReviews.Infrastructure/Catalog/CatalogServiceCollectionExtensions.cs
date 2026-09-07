@@ -35,6 +35,10 @@ internal static class CatalogServiceCollectionExtensions
             CoverArtArchiveClient.HttpClientName,
             ConfigureCoverArtClient);
 
+        services.AddHttpClient<IWikidataClient, WikidataClient>(
+            WikidataClient.HttpClientName,
+            ConfigureWikidataClient);
+
         services.AddScoped<IMusicCatalogService, MusicCatalogService>();
 
         return services;
@@ -45,7 +49,11 @@ internal static class CatalogServiceCollectionExtensions
         var options = GetOptions(services);
 
         client.BaseAddress = new Uri(EnsureTrailingSlash(options.BaseUrl));
-        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+
+        // Sin timeout global: lo aplica MusicBrainzThrottlingHandler por intento.
+        // Con un timeout aca, la espera en la cola de 1 req/seg lo consumiria y el
+        // error resultante culparia al HttpClient en vez de al servicio externo.
+        client.Timeout = Timeout.InfiniteTimeSpan;
 
         // TryAddWithoutValidation y no ParseAdd: el formato que pide MusicBrainz
         // incluye un comentario entre parentesis con la via de contacto, y el parser
@@ -62,6 +70,22 @@ internal static class CatalogServiceCollectionExtensions
         client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
 
         client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", options.UserAgent);
+    }
+
+    /// <remarks>
+    /// Wikidata no tiene la cola de 1 request por segundo de MusicBrainz, pero si pide
+    /// identificarse: sin User-Agent devuelve 403. Se reutiliza el mismo que ya exige
+    /// MusicBrainz en vez de configurar otro.
+    /// </remarks>
+    private static void ConfigureWikidataClient(IServiceProvider services, HttpClient client)
+    {
+        var options = GetOptions(services);
+
+        client.BaseAddress = new Uri("https://www.wikidata.org/");
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", options.UserAgent);
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json");
     }
 
     private static MusicBrainzOptions GetOptions(IServiceProvider services) =>

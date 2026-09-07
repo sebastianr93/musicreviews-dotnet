@@ -6,11 +6,11 @@ namespace MusicReviews.Domain.Entities;
 /// <remarks>
 /// No se guarda el token en claro: se persiste su hash SHA-256. Si la base se filtra,
 /// los tokens robados no sirven para pedir un access token nuevo. Es el mismo criterio
-/// que se aplica a las contrasenias, y la razon por la que el valor en claro solo existe
+/// que se aplica a las contraseñas, y la razon por la que el valor en claro solo existe
 /// una vez, en la respuesta HTTP que lo emite.
 ///
 /// Los tokens rotan: cada refresh revoca el token usado y emite uno nuevo, encadenado por
-/// <see cref="ReplacedByTokenHash"/>. Si llega un token ya revocado, es senial de robo
+/// <see cref="ReplacedByTokenHash"/>. Si llega un token ya revocado, es señal de robo
 /// (alguien esta reusando un token viejo) y se revoca la familia completa del usuario.
 /// </remarks>
 public class RefreshToken

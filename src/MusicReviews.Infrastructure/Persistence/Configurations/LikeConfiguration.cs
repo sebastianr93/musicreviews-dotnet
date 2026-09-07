@@ -34,6 +34,11 @@ public class LikeConfiguration : IEntityTypeConfiguration<Like>
         // Conteo de likes/dislikes de un target sin tocar la tabla de usuarios.
         builder.HasIndex(l => new { l.TargetType, l.TargetId, l.IsLike });
 
+        // Timeline de actividad: los votos de un usuario, mas recientes primero.
+        // El unico (UserId, TargetType, TargetId) no ordena por fecha.
+        builder.HasIndex(l => new { l.UserId, l.CreatedAt })
+            .IsDescending(false, true);
+
         builder.HasOne(l => l.User)
             .WithMany(u => u.Likes)
             .HasForeignKey(l => l.UserId)

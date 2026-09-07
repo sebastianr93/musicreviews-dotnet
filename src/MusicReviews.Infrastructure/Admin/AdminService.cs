@@ -214,7 +214,7 @@ internal sealed class AdminService : IAdminService
         {
             return Result.Failure<AdminUserDto>(Error.Validation(
                 "admin.cannot_demote_self",
-                "No podes quitarte a vos mismo el rol de administrador."));
+                "No podés quitarte a vos mismo el rol de administrador."));
         }
 
         if (role.Equals(AppRoles.Admin, StringComparison.OrdinalIgnoreCase))
@@ -227,7 +227,7 @@ internal sealed class AdminService : IAdminService
             {
                 return Result.Failure<AdminUserDto>(Error.Validation(
                     "admin.last_admin",
-                    "No se puede quitar el ultimo administrador del sistema."));
+                    "No se puede quitar el último administrador del sistema."));
             }
         }
 

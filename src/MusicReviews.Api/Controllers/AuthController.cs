@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MusicReviews.Api.Infrastructure;
 using MusicReviews.Application.Auth;
 using MusicReviews.Application.Auth.Dtos;
+using MusicReviews.Application.Users.Dtos;
 using MusicReviews.Application.Common.Interfaces;
 
 namespace MusicReviews.Api.Controllers;
@@ -66,6 +67,24 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>Revoca un refresh token. Idempotente.</summary>
+    /// <summary>
+    /// Cambia la contraseña del usuario autenticado. Revoca todas sus sesiones, incluida
+    /// la que hizo el cambio: hay que volver a entrar.
+    /// </summary>
+    [HttpPost("password")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ChangePassword(
+        ChangePasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _authService.ChangePasswordAsync(request, GetIpAddress(), cancellationToken);
+
+        return result.IsSuccess ? NoContent() : this.Problem(result.Error);
+    }
+
     [HttpPost("logout")]
     [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

@@ -87,6 +87,31 @@ public class CatalogController : ControllerBase
     }
 
     /// <summary>
+    /// Busca canciones (grabaciones) en MusicBrainz, agrupadas por tema.
+    /// </summary>
+    /// <remarks>
+    /// Endpoint aparte y no un campo mas dentro de la busqueda de albumes: el buscador
+    /// del frontend es uno solo, pero pide las tres cosas en paralelo y pinta cada
+    /// seccion cuando llega. Devolverlas juntas obligaria a esperar a la mas lenta —y
+    /// con una cola de 1 request por segundo contra MusicBrainz, la mas lenta llega
+    /// tres turnos despues que la primera.
+    /// </remarks>
+    [HttpGet("songs")]
+    [ProducesResponseType<PagedResult<SongSearchItemDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SearchSongs(
+        [FromQuery] string query,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = PageRequest.DefaultPageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _catalog.SearchSongsAsync(
+            query, new PageRequest(page, pageSize), cancellationToken);
+
+        return result.IsSuccess ? Ok(result.Value) : this.Problem(result.Error);
+    }
+
+    /// <summary>
     /// Detalle de un album con sus estadisticas de reviews.
     /// Lo cachea localmente (junto con su artista y portada) en la primera consulta.
     /// </summary>

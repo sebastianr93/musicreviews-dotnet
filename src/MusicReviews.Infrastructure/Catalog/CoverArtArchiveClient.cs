@@ -19,6 +19,31 @@ internal interface ICoverArtArchiveClient
     Task<string?> GetReleaseGroupCoverUrlAsync(string releaseGroupMbid, CancellationToken ct);
 }
 
+/// <summary>
+/// Construye la URL de portada sin preguntarle a nadie.
+/// </summary>
+/// <remarks>
+/// <para>
+/// La URL de Cover Art Archive es <b>deterministica</b> a partir del MBID del
+/// release-group. En el detalle de un album se hace igual un HEAD antes de guardarla,
+/// porque ahi la URL se persiste y no vale la pena dejar una rota en la base.
+/// </para>
+/// <para>
+/// <b>En los listados no.</b> Un listado son cincuenta albumes: comprobar cada uno
+/// serian cincuenta requests a un tercero para pintar una grilla, y el usuario esperando.
+/// Aca se emite la URL directamente y quien decide es el navegador: si la portada no
+/// existe, la imagen falla y el frontend la reemplaza por el recuadro vacio. El costo de
+/// equivocarse es un 404 que el navegador ya iba a hacer de todos modos, y a cambio
+/// todas las listas muestran tapa desde el primer render.
+/// </para>
+/// </remarks>
+internal static class CoverArt
+{
+    public static string FrontUrl(string baseUrl, string releaseGroupMbid, int size) =>
+        $"{(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/")}" +
+        $"release-group/{Uri.EscapeDataString(releaseGroupMbid)}/front-{size}";
+}
+
 internal sealed class CoverArtArchiveClient : ICoverArtArchiveClient
 {
     public const string HttpClientName = "coverartarchive";

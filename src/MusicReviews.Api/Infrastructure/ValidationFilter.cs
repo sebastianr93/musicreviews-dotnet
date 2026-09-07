@@ -55,7 +55,7 @@ public sealed class ValidationFilter : IAsyncActionFilter
             context.Result = new BadRequestObjectResult(new ValidationProblemDetails(context.ModelState)
             {
                 Status = StatusCodes.Status400BadRequest,
-                Title = "La solicitud no es valida.",
+                Title = "La solicitud no es válida.",
                 Instance = context.HttpContext.Request.Path
             });
 

@@ -39,8 +39,9 @@ public class CommentConfiguration : IEntityTypeConfiguration<Comment>
         // no obligue a un seq scan al validar la integridad.
         builder.HasIndex(c => c.ParentCommentId);
 
-        // Perfil publico: comentarios de un usuario.
-        builder.HasIndex(c => c.UserId);
+        // Perfil publico y timeline: comentarios de un usuario, mas recientes primero.
+        builder.HasIndex(c => new { c.UserId, c.CreatedAt })
+            .IsDescending(false, true);
 
         builder.HasOne(c => c.Review)
             .WithMany(r => r.Comments)

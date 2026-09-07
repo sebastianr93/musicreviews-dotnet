@@ -16,7 +16,15 @@ Backend API-first en ASP.NET Core 10 sobre PostgreSQL, con catalogo alimentado p
 | 5 | Comments: arbol anidado sin N+1 + tests unitarios | Completa |
 | 6 | Likes y modulo de usuarios (perfil, favoritos) | Completa |
 | 7 | Admin: moderacion, roles, estadisticas + tests de integracion | Completa |
-| 8 | Frontend minimo usable | **En curso** |
+| 8 | Frontend minimo usable | Completa |
+| 9 | Social: seguir usuarios | Completa |
+| 10 | Actividad de usuario y feed de a quienes seguis | Completa |
+| 11 | Notificaciones | Completa |
+| 12 | Busqueda unificada, con canciones | Completa |
+| 13 | Home tipo feed | Completa |
+| 14 | Noticias por RSS | Completa |
+| 15 | Buscador instantáneo, foto de artista, portadas en todos los listados, avatar y contraseña | **En curso** |
+| 16 | Perfil privado con aprobación de seguidores | Pendiente |
 
 ---
 
@@ -128,7 +136,7 @@ el valor en claro existe una sola vez, en la respuesta HTTP que lo emite. Si la 
 los refresh tokens robados no sirven.
 
 Los tokens **rotan**: cada `refresh` revoca el token presentado y emite uno nuevo, encadenado
-por `ReplacedByTokenHash`. Si llega un token que ya estaba revocado, es senial de que alguien
+por `ReplacedByTokenHash`. Si llega un token que ya estaba revocado, es señal de que alguien
 tiene una copia vieja, asi que se revoca la familia completa de tokens activos de ese usuario
 y se fuerza un login nuevo.
 
@@ -141,7 +149,7 @@ Otras decisiones:
   de 15 minutos, eso significaria aceptarlo durante 20.
 - **`MapInboundClaims = false`.** Sin el mapeo legacy de WS-Federation, `sub` se llama `sub`
   y no se convierte en una URI larga.
-- **Login sin enumeracion de cuentas.** "Usuario inexistente" y "contrasenia incorrecta"
+- **Login sin enumeracion de cuentas.** "Usuario inexistente" y "contraseña incorrecta"
   devuelven el mismo error. Los intentos fallidos alimentan el bloqueo de Identity
   (5 intentos, 5 minutos).
 
@@ -154,7 +162,7 @@ Nunca las pongas en `appsettings.json` — usa user-secrets:
 dotnet user-secrets init --project src/MusicReviews.Api
 dotnet user-secrets set "SeedAdmin:Email" "admin@musicreviews.local" --project src/MusicReviews.Api
 dotnet user-secrets set "SeedAdmin:UserName" "admin" --project src/MusicReviews.Api
-dotnet user-secrets set "SeedAdmin:Password" "<una contrasenia tuya>" --project src/MusicReviews.Api
+dotnet user-secrets set "SeedAdmin:Password" "<una contraseña tuya>" --project src/MusicReviews.Api
 ```
 
 La clave de firma JWT en `appsettings.Development.json` es de desarrollo. En produccion va por
@@ -176,6 +184,8 @@ Todos publicos (navegar el catalogo no requiere cuenta) y bajo la politica de ra
 | GET | `/api/catalog/artists/{mbid}` | Detalle de artista. Lo cachea si no estaba |
 | GET | `/api/catalog/artists/{mbid}/albums` | Discografia (albumes y EPs) |
 | GET | `/api/catalog/albums?query=&page=&pageSize=` | Busca albumes |
+| GET | `/api/catalog/songs?query=&page=&pageSize=` | Busca canciones, agrupadas por tema |
+| GET | `/api/search/quick?q=&limit=` | Sugerencias del catálogo local (desplegable) |
 | GET | `/api/catalog/albums/{mbid}` | Detalle de album + estadisticas de reviews |
 
 ### Estrategia de cache
@@ -218,6 +228,150 @@ que identifique la aplicacion y de una via de contacto, y responde `403` si no l
 ```json
 "UserAgent": "MusicReviews/0.1.0 ( https://github.com/tu-usuario/MusicReviews )"
 ```
+
+### Ordenar los resultados de busqueda
+
+Buscar "the dark side of the moon" en MusicBrainz devuelve decenas de release-groups con
+ese titulo **exacto**. Todos matchean igual de bien, asi que el indice les asigna el mismo
+`score`, y entre empates el orden es arbitrario: el de Pink Floyd puede quedar en la
+posicion 45 y el de una banda desconocida en la primera. No es un bug de la API —
+MusicBrainz es un catalogo, no un ranking: no tiene ninguna nocion de popularidad y no
+la expone.
+
+Se resuelve en dos pasos:
+
+**Traer mas de lo que se muestra.** Cada busqueda pide 100 resultados (el maximo de la
+API) y se reordena antes de paginar. Reordenar solo los 20 de la primera pagina no
+traeria nunca al que esta en la posicion 45. Ademas paginar pasa a ser gratis: las
+paginas siguientes salen de la misma respuesta cacheada, sin consumir otro turno de la
+cola de 1 req/seg.
+
+**Usar la unica señal de popularidad que existe.** La cantidad de ediciones
+(`releaseCount`) es un proxy sorprendentemente bueno: un disco reeditado en vinilo, CD,
+remasterizado y por pais acumula cientos de releases; una autoedicion tiene una. No mide
+gusto, mide cuanta industria hubo alrededor — que para "cual de estos discos homonimos
+buscaba el usuario" es exactamente lo que hace falta.
+
+El orden completo (`AlbumSearchRanking`, en Application y con 15 tests):
+
+1. Los que quedan dentro de **10 puntos del mejor score** de la tanda.
+2. Entre ellos, mas ediciones primero. Fuera de ese grupo, manda el score.
+3. Album antes que EP antes que Single.
+4. El lanzamiento original antes que los homonimos posteriores; sin fecha, al final.
+5. Desempate por MBID, para que el orden no salte entre recargas.
+
+La tolerancia se mide **contra el maximo de la tanda**, no en tramos fijos. Agrupar en
+tramos de 10 fue el primer intento y un test lo tumbo: 100 y 97 caen en tramos distintos
+por estar a los lados de un limite arbitrario, y esa diferencia es ruido del indice, no
+una señal que deba pesar mas que 400 ediciones contra una.
+
+`releaseCount` no esta garantizado por la API, asi que hay un respaldo (la lista de
+releases que viene en la misma respuesta) y, si tampoco viene, el orden degrada con
+gracia a tipo y fecha.
+
+### Buscar canciones: agrupar lo que MusicBrainz no agrupa
+
+`GET /api/catalog/songs?query=...`
+
+**MusicBrainz no modela canciones, modela grabaciones.** Hay una fila por cada version
+registrada de un tema: el master original, cada remasterizacion, cada version en vivo,
+cada edicion por pais, cada aparicion en un recopilatorio. Buscar "Smells Like Teen
+Spirit" devuelve la misma cancion cien veces. Mostrar eso tal cual hace que la busqueda
+de canciones no sirva para nada.
+
+**La clave de agrupacion es (titulo normalizado, artista normalizado).** No puede ser el
+MBID, que es justamente lo que difiere entre versiones; ni la duracion, que varia entre
+ediciones y a veces ni viene.
+
+**La normalizacion tiene que ser agresiva**, porque la diferencia entre versiones vive
+en el titulo: `Song`, `Song (Remastered 2011)`, `Song (Live at Reading)`,
+`Song - 2004 Remaster`. Entonces:
+
+- se pasa a minusculas, se quitan acentos y puntuacion;
+- se elimina **todo lo que este entre parentesis o corchetes**, incluidos los anidados;
+- se corta la cola tras un guion **solo si contiene una palabra de version**
+  (`remaster`, `live`, `mix`, `demo`...).
+
+Esa asimetria es deliberada. Entre parentesis casi siempre hay una anotacion de version;
+un guion, en cambio, suele separar partes del titulo real —`Hell Is for Children - Part
+2`—, asi que cortarlo siempre uniria canciones distintas.
+
+**El costo asumido:** un titulo cuya unica diferencia real esta entre parentesis
+—`(I Can't Get No) Satisfaction` frente a `Satisfaction`— se agrupa igual. Se prefiere
+ese falso positivo ocasional a mostrar cuarenta filas identicas: el usuario llega igual
+al album correcto, que es a donde lleva el resultado.
+
+Al fundir el grupo, **los datos que le falten al representante se completan desde sus
+hermanos**: la version que mejor matchea no siempre es la que trae el album, la portada
+o la duracion, y todas describen la misma cancion. La fecha del grupo es la **mas vieja**
+—cuando salio el tema, no cuando salio la reedicion que quedo de representante—.
+
+**El plegado de acentos es una tabla escrita a mano, no `Normalize(FormD)`.** Esa seria
+la forma canonica, pero el proyecto corre con `InvariantGlobalization=true` y en ese modo
+la normalizacion Unicode **no hace nada**: devuelve la cadena tal cual, sin lanzar. La
+tilde sobrevive y el fallo es silencioso. La tabla cubre latin basico y extendido; lo que
+no esta en ella pero es letra se conserva, para que un titulo en cirilico o japones siga
+siendo distinguible en vez de colapsar a una clave vacia. Hay un test que lo fija.
+
+**`VersionCount` es el `ReleaseCount` de las canciones.** Cumple el mismo papel que en
+los albumes: es la unica señal de popularidad disponible, porque solo un tema muy
+difundido acumula decenas de versiones. El orden usa la misma tolerancia de score que
+`AlbumSearchRanking`, y dentro de ella decide la cantidad de versiones.
+
+**Una cancion lleva al album, no a si misma.** Aca se reseña el album, asi que el
+resultado enlaza al release-group. Elegirlo tiene su truco: una grabacion popular aparece
+en el disco original, en tres recopilatorios y en dos bandas sonoras, y tomar la primera
+edicion de la lista manda al usuario a un *Greatest Hits*. Se prefiere un release-group
+de tipo `Album` **sin tipos secundarios** —`Compilation`, `Live` y `Soundtrack` lo son— y,
+entre esos, el mas viejo. Los resultados que no llegan a ningun album van al final: son
+filas con las que el usuario no puede hacer nada.
+
+El agrupado corre **antes de paginar**. Agrupar sobre la pagina ya recortada dejaria
+pasar duplicados de la misma cancion en paginas distintas.
+
+### Un solo campo, tres busquedas en paralelo
+
+El buscador del frontend es uno solo —sin selector de tipo—, pero por debajo son tres
+endpoints (`/artists`, `/albums`, `/songs`) que el cliente pide **en paralelo** y pinta
+seccion por seccion a medida que llegan.
+
+No es una decision estetica. Contra MusicBrainz hay una cola de **1 request por
+segundo**: devolver las tres cosas en una sola respuesta obligaria a esperar a la mas
+lenta, que llega tres turnos despues que la primera. Asi el usuario ve artistas al primer
+segundo y sigue leyendo mientras llega el resto.
+
+Cada seccion **falla por su cuenta**: que MusicBrainz se caiga a mitad de la busqueda de
+canciones no puede borrar los albumes que ya estan en pantalla. Y una seccion que llega
+vacia no se muestra; el mensaje de "sin resultados" aparece una sola vez, cuando ninguna
+de las tres trajo nada.
+
+### Cuando MusicBrainz no responde
+
+Un fallo del catalogo externo viaja como `ExternalServiceUnavailableException` y sale
+como **`503` con `Retry-After`**, nunca como `500`. La diferencia no es cosmetica: un
+`500` le dice al cliente "esto esta roto", un `503` le dice "volve a intentar". El log
+lo registra como `Warning`, no `Error`, para que un `Error` en el log siga significando
+"hay algo que arreglar" y los bugs reales no queden tapados por caidas de terceros.
+
+El servicio traduce esa excepcion a un `Result` con `ErrorType.Unavailable` antes de
+devolverla: los llamadores internos —crear una review, marcar un favorito— trabajan con
+`Result`, y que un fallo del catalogo llegara como excepcion los obligaria a mezclar dos
+estilos de manejo de error para el mismo caso. El `GlobalExceptionHandler` la maneja
+igual, como red de seguridad.
+
+**El timeout se aplica por intento, no al request completo.** Es la causa de un bug que
+costo encontrar: la espera en la cola de 1 req/seg ocurre *dentro* del pipeline del
+`HttpClient`, asi que con `HttpClient.Timeout` esa espera consume el mismo presupuesto
+que la llamada real. Con la cola ocupada y los reintentos con backoff (1.1s, 2.2s,
+4.4s), un request agotaba 20 segundos sin haber hecho una sola peticion HTTP, y el error
+—"the request was canceled due to the configured HttpClient.Timeout"— apuntaba al lugar
+equivocado. Ahora el cliente se configura con `Timeout.InfiniteTimeSpan` y cada intento
+recibe su propio `CancellationTokenSource`; distinguir si cancelo ese token o el de la
+request separa "el servicio externo tardo" de "el usuario cerro la pestaña".
+
+**El `Detail` en Development es el mensaje, no el `ToString()`.** El stack trace completo
+en el cuerpo de la respuesta llena la pantalla del navegador y no aporta nada que no este
+ya en el log de Serilog, con mejor formato.
 
 ### Fechas parciales
 
@@ -277,7 +431,7 @@ por `TargetId` y unir en memoria. Siguen siendo dos queries, no una por fila.
 ### Una review por usuario y album
 
 La regla la sostiene el indice unico `(UserId, AlbumId)`, no un `SELECT` previo: entre
-consultar y insertar cabe otra request del mismo usuario (doble click, dos pestanias) y solo
+consultar y insertar cabe otra request del mismo usuario (doble click, dos pestañas) y solo
 la base puede decidir sin condicion de carrera. El servicio captura la violacion del
 constraint y la traduce a `409 Conflict` con el codigo `reviews.already_exists`.
 
@@ -427,6 +581,512 @@ MusicBrainz y lo persiste antes de guardar la relacion, igual que al crear una r
 Quitarlo, en cambio, se resuelve solo contra la cache local — sacar un favorito nunca
 deberia disparar una llamada a la API externa.
 
+### Seguir usuarios
+
+| Metodo | Ruta | Auth | Que hace |
+|--------|------|------|----------|
+| POST | `/api/users/{userName}/follow` | Bearer | Empieza a seguir. Idempotente |
+| DELETE | `/api/users/{userName}/follow` | Bearer | Deja de seguir. Idempotente |
+| GET | `/api/users/{userName}/followers` | publico | Quienes lo siguen |
+| GET | `/api/users/{userName}/following` | publico | A quienes sigue |
+
+La relacion es **dirigida**: que A siga a B no implica lo contrario.
+
+Las dos operaciones devuelven el **perfil del seguido ya actualizado**, para que el
+cliente repinte el boton y el contador sin pedirlo de nuevo.
+
+**La clave primaria compuesta `(FollowerId, FollowedId)` es lo que impide seguir dos
+veces a la misma persona.** No hay Id sustituto ni chequeo previo en la aplicacion: entre
+un `SELECT` y un `INSERT` cabe un doble click, y solo la base puede decidir sin condicion
+de carrera. El servicio captura la violacion y responde con el estado que quedo.
+
+**Un CHECK en la base rechaza seguirse a uno mismo.** Podria validarse solo en el
+servicio, pero una fila asi ensuciaria todos los contadores y el feed sin que ninguna
+consulta la delate.
+
+**Dos indices, no uno.** `(FollowerId, CreatedAt DESC)` para "a quienes sigo" y
+`(FollowedId, CreatedAt DESC)` para "quienes me siguen". La PK solo sirve para la primera
+consulta: su columna lider es `FollowerId`.
+
+**Dos FK a la misma tabla, las dos en cascada**, asi que borrar una cuenta limpia sus
+relaciones en ambos sentidos. PostgreSQL admite multiples caminos de cascada; en SQL
+Server esto no compilaria.
+
+En los listados, `isFollowedByCurrentUser` se resuelve dentro de la misma consulta que
+trae las filas, no con una query por fila.
+
+---
+
+## Actividad y feed
+
+| Metodo | Ruta | Auth | Que hace |
+|--------|------|------|----------|
+| GET | `/api/users/{userName}/activity` | publico | Timeline de un usuario |
+| GET | `/api/feed` | Bearer | Actividad combinada de a quienes seguis |
+
+Los dos aceptan `?cursor=` y `?limit=`.
+
+### No hay tabla de actividad
+
+El timeline se **deriva** de las tablas que ya existen —reseñas, comentarios y votos—
+en vez de mantener una tabla de feed escrita en cada accion.
+
+Una tabla de feed se lee mas rapido, pero hay que sincronizarla en cada alta, baja y
+edicion, y cualquier camino que se olvide de hacerlo deja el feed mostrando contenido que
+ya no existe. Derivando, borrar una reseña borra su actividad sin que nadie tenga que
+acordarse; el borrado logico de un comentario lo saca del timeline solo. Hay un test que
+verifica exactamente eso.
+
+Son **cuatro consultas acotadas** —una por tipo de actividad, cada una pidiendo solo lo
+que puede entrar en la pagina— y la mezcla se hace en memoria. La cantidad de consultas
+es fija: no crece con los resultados ni con cuantos usuarios seguis. Cada una usa su
+propio indice `(UserId, CreatedAt DESC)`, que hubo que agregar: los indices que ya
+existian ordenan por album o por objetivo del voto, no por fecha.
+
+Los votos necesitan dos de esas cuatro consultas porque `Like` es polimorfico: sin FK
+real, el join contra reseñas y contra comentarios no se puede hacer en una sola.
+
+Van **secuenciales, no con `Task.WhenAll`**: EF Core no admite dos operaciones
+simultaneas sobre el mismo `DbContext`. Paralelizarlas exigiria un contexto por consulta,
+que para cuatro consultas indexadas no compensa.
+
+### Paginacion por cursor, no por offset
+
+Un feed no se puede paginar por offset. Entre que el usuario pide la pagina 1 y la 2,
+alguien publica algo: esa fila entra arriba, corre todo un lugar, y la primera fila de la
+pagina 2 es la que ya vio al final de la 1. Con contenido que se agrega constantemente
+eso no es un caso raro, es lo normal.
+
+**El cursor lleva el instante y el Id**, no solo la fecha. El timeline mezcla tablas
+distintas y nada impide que dos entradas compartan el instante exacto —basta votar y
+comentar en la misma operacion—. Con un cursor de solo fecha, un filtro `<` se saltea las
+entradas empatadas y un `<=` las repite. Con el Id el orden queda **total** y no hay
+ambiguedad.
+
+La consulta filtra por `CreatedAt <= cursor` (incluyente, para no perder los empates) y
+el descarte fino lo hace `IsAfter` en memoria, donde el Id ya esta disponible.
+
+Se codifica en **ticks UTC**, no en milisegundos: PostgreSQL guarda `timestamptz` con
+precision de microsegundos, y truncar haria que el instante decodificado nunca coincida
+con el de la fila — lo que rompe la deteccion de empates en silencio. Va en Base64Url
+para que el cliente lo trate como opaco, y un cursor invalido degrada a "empezar de cero"
+en vez de devolver un 500.
+
+**El cupo por consulta es `limit + 2`, no `limit + 1`.** Como el filtro por fecha es
+incluyente, la entrada del propio cursor siempre vuelve a venir y se descarta en memoria;
+con `limit + 1` el resultado quedaba justo en `limit` y el servicio concluia "no hay mas
+paginas" con entradas todavia sin entregar. Si ademas hay empates de instante, un bucle
+acotado vuelve a consultar duplicando el cupo. Este bug lo encontro un test de
+integracion y **los tests unitarios del cursor no podian encontrarlo**: simulan la
+paginacion sobre una lista en memoria, donde no existe el `LIMIT` de la consulta.
+
+`ActivityCursorTests` tiene 20 casos. El que importa es
+`PaginarElFeedCompleto_VisitaCadaEntradaExactamenteUnaVez`: recorre feeds de hasta 200
+entradas —con un tercio compartiendo instante— y verifica que ninguna se repita ni se
+pierda. Hay una variante con las 25 entradas en el mismo instante exacto.
+
+---
+
+## Notificaciones
+
+| Metodo | Ruta | Auth | Que hace |
+|--------|------|------|----------|
+| GET | `/api/notifications` | Bearer | Listado por cursor (`?cursor=`, `?limit=`, `?unreadOnly=`) |
+| GET | `/api/notifications/unread-count` | Bearer | Cuantos faltan leer |
+| POST | `/api/notifications/{id}/read` | Bearer | Marca uno como leido (idempotente) |
+| POST | `/api/notifications/read-all` | Bearer | Marca todos; devuelve cuantos cambiaron |
+
+Tipos: `ReviewCommented`, `CommentReplied`, `ReviewVoted`, `CommentVoted`, `NewFollower`.
+
+### Estas si se persisten (a diferencia de la actividad)
+
+La seccion anterior explica por que el timeline se deriva en vez de guardarse. Con las
+notificaciones la decision es la contraria, y por una razon concreta: **tienen estado
+propio que no vive en ninguna otra tabla** —si fueron leidas y cuando—. Derivarlas
+obligaria igual a guardar una marca de lectura por evento, que es exactamente esta tabla
+con mas pasos y con la parte dificil (que evento corresponde a que marca) resuelta a mano.
+
+### Quien se entera de que
+
+Un comentario genera **un solo aviso**. Si es una respuesta va al autor del comentario
+padre; si es de primer nivel, al autor de la reseña. **No van los dos**: en un hilo
+largo, el autor de la reseña recibiria una notificacion por cada respuesta anidada entre
+terceros, que es exactamente el ruido que hace que la gente deje de mirar la campana.
+
+Nadie recibe avisos de sus propias acciones: comentar la propia reseña o votar el propio
+comentario no genera nada. La comprobacion esta en `NotifyAsync`, en un solo lugar, y no
+repartida por cada servicio que llama.
+
+### Poner y sacar un voto no acumula avisos
+
+Un voto es un estado, no un hecho: mientras esta puesto, "a fulano le gusto tu review" es
+cierto; cuando se retira, deja de serlo. Por eso:
+
+- Retirar el voto **retira el aviso si todavia no se leyo**. Si ya se leyo se conserva:
+  borrar lo que el usuario ya vio seria reescribirle el historial.
+- Cambiar el sentido del voto **actualiza el aviso existente** en vez de sumar otro.
+- Un aviso equivalente sin leer se **refresca** —vuelve a subir en el listado— en lugar
+  de duplicarse.
+
+Seguir a alguien se trata distinto: dejar de seguir **no** retira el aviso. "Empezo a
+seguirte" es un hecho que ocurrio, no un estado visible al lado de un contenido. Volver a
+seguir tampoco acumula, porque cae en la regla de refrescar el equivalente sin leer.
+
+### Quien guarda
+
+`INotificationWriter` **no guarda**. Solo encola el cambio en el contexto; el
+`SaveChangesAsync` lo hace el servicio que provoco el evento, que es el que sabe cuando su
+propia operacion quedo consistente.
+
+- En **votos y seguimientos** el aviso viaja en la misma transaccion que la accion: o
+  quedan los dos, o no queda ninguno.
+- En **comentarios** hace falta un guardado previo para obtener el `Id` que genera la
+  base, asi que el aviso va en una segunda escritura. Si esa fallara, el comentario queda
+  publicado y solo se pierde el aviso: es la degradacion correcta, y por eso ese error se
+  registra sin propagarse.
+
+La interfaz de escritura esta **separada de la de lectura** a proposito: los servicios de
+comentarios y votos solo necesitan escribir, y depender de `INotificationService` les
+daria acceso a operaciones que no les corresponden, como marcar avisos ajenos como leidos.
+Detras hay una sola clase, registrada por su tipo concreto y reenviada a las dos
+interfaces para que sea la misma instancia dentro de la request.
+
+### El contador tiene su propio indice parcial
+
+`GET /api/notifications/unread-count` es la consulta mas frecuente de toda la aplicacion:
+se pide en cada carga de pagina para pintar el globito. Lo normal es tener **pocas sin
+leer sobre un historial largo**, asi que el indice es parcial:
+
+```csharp
+builder.HasIndex(n => n.RecipientId)
+    .HasFilter("NOT \"IsRead\"")
+    .HasDatabaseName("IX_Notifications_RecipientId_Unread");
+```
+
+Un indice completo sobre `RecipientId` crece con todo el historial de todos los usuarios;
+este solo indexa las filas que la consulta mira, y se vacia solo a medida que la gente
+lee.
+
+### El cursor es mas simple que el de actividad
+
+`KeysetCursor` apunta a **una sola tabla con Id numerico**, asi que la condicion de
+keyset se traduce entera a SQL:
+
+```sql
+CreatedAt < @t OR (CreatedAt = @t AND Id < @id)
+```
+
+No hace falta traer de mas ni descartar en memoria como en el timeline, que mezcla tablas
+y desempata con un Id compuesto de texto. El cupo es `limit + 1` —el clasico "una fila de
+mas para saber si hay pagina siguiente"— y no `limit + 2`. La fecha se codifica igual en
+ticks UTC, por la misma razon de precision.
+
+### Marcar como leido es imposible de hacer sobre un aviso ajeno
+
+El filtro por destinatario va **dentro del `ExecuteUpdateAsync`**, no en una consulta
+previa:
+
+```csharp
+await _context.Notifications
+    .Where(n => n.Id == notificationId && n.RecipientId == userId && !n.IsRead)
+    .ExecuteUpdateAsync(...);
+```
+
+Asi no hay ventana entre comprobar y actuar, y el caso "no soy el destinatario" no depende
+de que alguien se acuerde de escribir el `if`. La respuesta es 404 y no 403: confirmar que
+ese aviso existe ya seria filtrar informacion de otro usuario.
+
+### En el frontend
+
+La campana consulta el contador **cada 60 segundos y solo con la pestaña visible**, mas
+un refresco al volver a la pestaña. No hay push: para un proyecto de este tamaño, un
+`COUNT` sobre un indice parcial una vez por minuto es mas barato —de operar y de
+entender— que sostener una conexion abierta por usuario. Si hiciera falta inmediatez, el
+lugar donde cambiarlo es ese unico `setInterval`.
+
+---
+
+## Búsqueda instantánea
+
+`GET /api/search/quick?q=&limit=` — público.
+
+**Un desplegable que responde desde la primera letra no puede consultar MusicBrainz.**
+Su límite es **1 request por segundo para toda la aplicación**, y la búsqueda unificada
+son tres llamadas. Escribir "nirvana" son siete pulsaciones: incluso con debounce, cada
+consulta tardaría segundos y una sola persona tecleando dejaría sin catálogo a las demás.
+Spotify puede hacerlo porque el índice es suyo.
+
+La salida es la misma: **el índice es nuestro**. El desplegable consulta únicamente
+Postgres —artistas y álbumes ya cacheados— y responde en milisegundos. La búsqueda
+completa contra MusicBrainz sigue existiendo detrás de Enter.
+
+### El catálogo se siembra solo
+
+Si el catálogo local creciera únicamente cuando alguien abre el detalle de un álbum, el
+desplegable estaría vacío durante semanas. Por eso **cada búsqueda completa persiste sus
+veinte mejores resultados**: cada persona que busca deja el índice un poco más útil para
+la siguiente.
+
+Las filas sembradas son parciales y llevan `CachedAt` en el epoch **a propósito**: no
+pasaron por el lookup de detalle, así que les falta lo que solo llega ahí. Con esa fecha
+quedan siempre "vencidas" y se refrescan solas la primera vez que alguien las abre. No
+hizo falta una columna de "esto es un esbozo": la fecha ya lo dice.
+
+Se siembran los mejores según **nuestro** orden, no los primeros que devolvió MusicBrainz:
+el orden de la API no distingue entre homónimos, que es todo el problema que resuelve
+`AlbumSearchRanking`. Y solo cuando la búsqueda salió efectivamente a la red, no cuando se
+sirvió de la caché en memoria: si no, paginar dejaría de ser gratis.
+
+### Cómo se ordena
+
+Los resultados vienen **mezclados**, no separados por tipo: el desplegable es una sola
+lista. El criterio, en orden:
+
+1. **Calidad del match textual** — exacto, luego prefijo, luego contiene. Manda sobre todo
+   lo demás: quien escribe "nir" quiere lo que empieza con "nir", no el disco más reseñado
+   que en algún lado contiene esas letras.
+2. **Popularidad local** — favoritos y reseñas.
+3. **Título más corto** — "Nirvana" antes que "Nirvana Tribute Band".
+
+Se piden hasta `limit` de cada tipo y se mezclan después: pedir `limit` repartido dejaría
+que un tipo con muchos resultados tape al otro, y el desplegable tiene que poder mostrar
+el artista **y** sus discos.
+
+Los comodines de `LIKE` se escapan. No es una inyección —el valor viaja como parámetro—
+pero sin eso escribir `%` devuelve el catálogo entero.
+
+**Lo que no cubre:** las canciones. La aplicación no las persiste, porque se reseña el
+álbum y no el tema. Aparecen en la página de resultados completa.
+
+**Si el catálogo crece mucho**, el `ILIKE '%...%'` deja de escalar porque no puede usar un
+índice B-tree. El reemplazo natural es `pg_trgm` con un índice GIN, que es una extensión y
+una migración; para el volumen de este proyecto no hace falta todavía.
+
+### Portadas en todos los listados
+
+La URL de Cover Art Archive es **determinística** a partir del MBID. En el detalle de un
+álbum se hace igual un `HEAD` antes de guardarla, porque ahí se persiste y no vale la pena
+dejar una rota en la base. **En los listados no**: un listado son cincuenta álbumes, y
+comprobar cada uno serían cincuenta requests a un tercero para pintar una grilla.
+
+Se emite la URL directamente y decide el navegador. El frontend dibuja siempre el
+recuadro y mete la imagen adentro; si la portada no existe, la imagen se borra sola y
+queda el hueco del tamaño correcto. Al revés —reemplazar la imagen por un recuadro cuando
+falla— no funciona: el error puede dispararse antes de que el nodo esté en el documento.
+
+### La foto del artista sale de Wikidata
+
+MusicBrainz **no aloja imágenes**. Lo que sí tiene son relaciones hacia otros sitios, y
+una apunta a Wikidata; Wikidata guarda en `P18` el nombre del archivo en Wikimedia
+Commons; Commons lo sirve por una URL construible. La cadena es
+`MBID → relación wikidata → P18 → Commons`.
+
+El primer paso **sale gratis**: la relación viene en el mismo lookup del artista agregando
+`inc=url-rels`, así que no consume otro turno de la cola de 1 req/seg. Solo la llamada a
+Wikidata es adicional, y Wikidata no impone ese límite.
+
+Se eligió Commons porque sus imágenes tienen licencia libre y son enlazables. Cualquier
+otra fuente —resultados de un buscador, la foto de un perfil— sería republicar material
+ajeno sin derecho.
+
+**Un solista es un "Artista", no una "Person".** MusicBrainz clasifica así porque su
+modelo distingue personas de grupos; para quien lee la pantalla eso es ruido. La
+traducción vive en el frontend: el dato crudo se conserva en la API, que es donde tiene
+sentido.
+
+---
+
+## Avatar y contraseña
+
+| Método | Ruta | Auth | Qué hace |
+|--------|------|------|----------|
+| POST | `/api/users/me/avatar` | Bearer | Sube el avatar (multipart, campo `file`) |
+| DELETE | `/api/users/me/avatar` | Bearer | Vuelve a la inicial |
+| POST | `/api/auth/password` | Bearer | Cambia la contraseña y revoca todas las sesiones |
+
+### El formato lo deciden los bytes
+
+La extensión y el `Content-Type` los elige quien sube el archivo. Un `.jpg` declarado como
+`image/jpeg` puede ser cualquier cosa, y como el avatar después se sirve **desde nuestro
+dominio**, un archivo que el navegador decida interpretar como HTML es un XSS con nuestro
+origen.
+
+`ImageSignature` mira los primeros doce bytes y acepta JPEG, PNG, WebP y GIF. **El SVG no
+está en la lista a propósito**: es una imagen legítima, pero es XML y admite `<script>`
+adentro.
+
+La otra mitad de la defensa está al servir: los avatares salen con
+`X-Content-Type-Options: nosniff` y con un mapa de tipos limitado a esos cuatro. Sin
+`nosniff`, el navegador puede ignorar el `Content-Type` y decidir por su cuenta.
+
+Los archivos van a una **carpeta configurable fuera de `wwwroot`**: ahí adentro quedarían
+dentro del publicado —se perderían en cada despliegue— y mezclados con los del sitio. El
+nombre lo genera el servidor, nunca el cliente: un nombre que viene de afuera es la vía
+clásica de escribir fuera de la carpeta con `../`.
+
+El tope se comprueba **tres veces**, y no es redundancia: el navegador corta antes de
+gastar la conexión del usuario, `RequestSizeLimit` corta antes de leer el cuerpo, y el
+servicio produce el mensaje que el usuario entiende. Una validación que solo vive en el
+cliente no es una validación.
+
+### Cambiar la contraseña cierra todas las sesiones
+
+Pide la contraseña actual aunque la sesión ya esté abierta: si alguien deja el navegador
+desbloqueado, no debería poder quedarse con la cuenta con dos clicks.
+
+Y revoca **todos** los refresh tokens, incluido el de quien hizo el cambio. Cambiar la
+contraseña se hace, casi siempre, porque se sospecha que alguien más entró; si las
+sesiones viejas siguieran renovándose, el cambio no serviría para nada.
+
+---
+
+## Home
+
+| Metodo | Ruta | Auth | Que hace |
+|--------|------|------|----------|
+| GET | `/api/home/popular?page=&pageSize=&windowDays=` | publico | Albumes con mas movimiento reciente |
+| GET | `/api/home/explore?page=&pageSize=` | publico | Albumes del catalogo para descubrir |
+| GET | `/api/feed?cursor=&limit=` | Bearer | Actividad de a quienes seguis (fase 10) |
+
+Son **tres endpoints, no uno**. El home los pide en paralelo y pinta cada seccion cuando
+llega la suya; una seccion que falla se queda con su error y las otras siguen en pie. Y
+una seccion vacia **se oculta entera**: un home con tres titulos y nada debajo se ve
+roto, aunque tecnicamente este bien.
+
+Los dos primeros son publicos: un visitante sin cuenta tiene que poder llegar, ver que
+hay y engancharse. Igual leen el usuario actual cuando esta, porque con sesion la
+respuesta cambia.
+
+### Populares: se cuenta desde la actividad, no desde los albumes
+
+La forma directa —recorrer los albumes y contarle a cada uno su movimiento con
+subconsultas— toca **todo el catalogo** para descubrir que la mayoria no tuvo ninguno.
+Aca se hace al reves: cada consulta arranca de las filas que ocurrieron dentro de la
+ventana, que son pocas y estan indexadas por fecha, y agrupa por album.
+
+Son **tres consultas y la mezcla en memoria**, igual que en el timeline de actividad y
+por la misma razon: son tres agregaciones que el motor resuelve con su propio indice, y
+un `UNION` las dejaria sin poder usarlo. Los votos necesitan un join explicito contra
+reseñas porque `Like` es polimorfico y no tiene FK.
+
+**Los pesos importan.** Escribir una reseña es una señal de interes mucho mas fuerte
+que hacer un click; sin pesos, un album con cincuenta votos desplazaria a uno con diez
+reseñas escritas:
+
+| Actividad | Peso |
+|-----------|------|
+| Reseña publicada | 3 |
+| Comentario | 2 |
+| Voto sobre una reseña | 1 |
+
+Los comentarios borrados no suman: el hilo sigue mostrando el hueco, pero el album no
+deberia seguir cobrando popularidad por algo que ya no se lee.
+
+**Lo que esto no es.** El resultado no esta acotado por el tamaño de la pagina sino por
+la ventana. Con mucho trafico, treinta dias de actividad no entran comodamente en memoria
+y esto habria que reemplazarlo por un contador materializado que se actualice con cada
+accion. Para el volumen de este proyecto la version derivada es preferible: no hay nada
+que sincronizar, y borrar una reseña le quita su peso sin que nadie tenga que acordarse.
+
+### Explorar: lo ultimo que entro al catalogo
+
+El catalogo local **no se precarga**: un album esta ahi porque alguien lo busco. Asi que
+"lo mas nuevo" es literalmente lo que la gente estuvo mirando, y ademas cambia solo con
+el uso, que es lo que hace que la seccion no muestre siempre lo mismo.
+
+Con sesion se excluye lo que el usuario ya reseñó —recomendarle lo que ya escucho y
+puntuo no descubre nada—. Los que tienen portada van primero: la seccion es una grilla de
+tapas grandes y una fila de recuadros vacios no invita a explorar.
+
+**Se pagina por offset, al reves que los feeds.** No es una inconsistencia. Un feed crece
+por arriba: lo nuevo entra en la primera posicion, corre todo un lugar y el offset repite
+filas. Este orden, en cambio, se mueve a la velocidad a la que alguien cachea un album
+nuevo, no a la de un scroll.
+
+### Las dos secciones deciden primero que mostrar y despues piden los datos
+
+`LoadAlbumsAsync` trae los albumes de la pagina con sus estadisticas en una sola
+consulta. Separarlo evita el N+1 obvio —una consulta por tarjeta— y tambien uno menos
+obvio: calcular promedio y cantidad de reseñas durante el ranking obligaria a
+computarlos para **todo** el catalogo y no solo para las quince filas que se van a
+mostrar.
+
+### El scroll infinito usa IntersectionObserver, no un listener de scroll
+
+Un listener de `scroll` se dispara decenas de veces por segundo y obliga a medir el
+layout en cada una: es la receta clasica del scroll que tironea. El observador avisa una
+sola vez, cuando el centinela del final entra en pantalla, y con `rootMargin: 400px` la
+pagina siguiente ya esta cargando cuando el usuario termina de ver la anterior.
+
+El observador se **desconecta al cambiar de vista**. Sin eso, cada visita al home dejaria
+uno mas vivo sobre nodos que ya no estan en el DOM.
+
+---
+
+## Noticias
+
+`GET /api/news?limit=` — publico.
+
+**Solo titulo, extracto corto, imagen y enlace a la fuente original.** Nada mas, y es
+deliberado: republicar el articulo entero seria reproducir obra ajena y ademas quitarle
+la visita a quien la escribio. Lo que se hace aca es lo que hace cualquier agregador
+serio: mostrar lo justo para que alguien decida si le interesa y mandarlo al sitio
+original. Por eso el nombre del medio viaja en cada item y se muestra siempre.
+
+Las fuentes se configuran en la seccion `News` de `appsettings.json`. **No estan fijas en
+el codigo** porque una URL de feed es lo primero que un medio cambia cuando migra de CMS,
+y eso no deberia requerir recompilar. Con la lista vacia el endpoint devuelve nada y el
+frontend oculta la seccion.
+
+### Un solo parser para RSS y Atom
+
+Los medios publican en uno u otro segun el CMS que usen y no hay forma de elegir. Las
+diferencias son pocas —`item` contra `entry`, `link` como texto contra `link` como
+atributo `href`, `pubDate` contra `published`— asi que se normalizan en `RssParser` y
+hacia afuera todo es un `NewsItemDto`.
+
+**Nada de esto puede lanzar por culpa de un feed.** Es el unico punto de la aplicacion
+que procesa contenido de un tercero sobre el que no se tiene ningun control: un XML mal
+formado, un item sin titulo, una fecha en un formato raro o una pagina de error servida
+con 200 son cosas que pasan y no son un error de esta aplicacion. Lo que no se entiende
+se descarta.
+
+**Las URLs se validan como http/https absolutas.** Esto no es formalismo: el enlace de la
+noticia termina en un `<a href>` del navegador, y un `javascript:` ahi es ejecucion de
+codigo en la sesion del usuario. Un item cuyo enlace no pasa el filtro se descarta entero
+—un extracto que no se puede atribuir es justo lo que no se quiere publicar—.
+
+**El orden de limpiar el HTML importa.** Primero se sacan las etiquetas y despues se
+decodifican las entidades. Al reves, `&lt;b&gt;` se convertiria en `<b>` y el paso
+siguiente lo borraria como si fuera una etiqueta, perdiendo texto que el autor escribio a
+proposito.
+
+### Se sirve viejo antes que vacio
+
+La cache guarda la ultima copia buena por bastante mas tiempo del que la considera fresca
+(30 minutos frescos, 24 horas de respaldo). Cuando vence la frescura se intenta refrescar,
+y **si ningun medio responde se devuelve igual lo que ya se tenia**. Para una seccion de
+relleno, una noticia de ayer es mejor que un hueco.
+
+Cada feed falla por su cuenta y tiene su propio timeout: un medio caido no puede impedir
+que se muestren los otros ni hacer esperar a la portada. Van en paralelo porque son sitios
+distintos y no hay ninguna cola compartida que respetar —al reves que con MusicBrainz—.
+
+El refresco esta serializado con un semaforo **estatico**. Sin eso, veinte visitas
+simultaneas al home con la cache vencida disparan veinte rondas de descargas contra los
+mismos medios; el que entra refresca y los demas se encuentran el resultado ya hecho. Es
+estatico porque el servicio es scoped: una instancia por request no podria coordinar nada.
+
+### Nada de esto se guarda en la base
+
+Una noticia no tiene estado propio en esta aplicacion —no se puntua, no se comenta, no se
+guarda—, asi que persistirla seria mantener una copia de contenido ajeno que ademas hay
+que sincronizar cuando el medio la edita o la baja. Alcanza con la cache en memoria.
+
+---
+
+## El avatar
+
 **El `avatarUrl` se valida como URL absoluta http/https.** No es formalismo: ese campo
 se renderiza en el perfil publico que ve cualquiera, asi que un `javascript:` guardado
 ahi es un XSS almacenado servido a todos los visitantes.
@@ -467,8 +1127,16 @@ dotnet test
 
 ### Unitarios (`tests/MusicReviews.UnitTests`)
 
-23 casos sobre `CommentTreeBuilder`, la logica mas propensa a bugs sutiles del backend.
-Ver la seccion de comentarios anidados.
+Cubren la logica pura, la mas propensa a bugs sutiles y la que no necesita base:
+
+- `CommentTreeBuilder` (23 casos) — ver la seccion de comentarios anidados.
+- `AlbumSearchRanking` (15) — ver el ordenamiento de la busqueda.
+- `SongSearchGrouping` (22) — normalizacion de titulos, agrupado de versiones y orden.
+- `RssParser` (23) — RSS y Atom, feeds rotos, extractos y filtrado de URLs peligrosas.
+- `ImageSignature` (8) — reconocimiento de formato por bytes y rechazo del SVG.
+- `ActivityCursor` (20) — ida y vuelta, empates de instante y paginacion completa.
+- `KeysetCursor` (9) — ida y vuelta, precision de microsegundos y degradacion ante un
+  cursor corrupto.
 
 ### Integracion (`tests/MusicReviews.IntegrationTests`)
 
@@ -482,7 +1150,7 @@ verificar vive en la base y no existe en InMemory: los indices unicos que sostie
 cascada, y la traduccion real de las proyecciones a SQL. Un test contra InMemory
 pasaria con un modelo que en produccion falla.
 
-**MusicBrainz se reemplaza por un fake.** `FakeMusicCatalogService` persiste artistas y
+**MusicBrainz y los feeds de noticias se reemplazan por fakes.** `FakeMusicCatalogService` persiste artistas y
 albumes deterministas derivados del MBID pedido. Depender de la API real metería una
 red externa en el camino critico de la suite, con un limite de 1 request por segundo
 que la volveria lentisima y fallos rojos cada vez que el servicio tenga un mal dia.
@@ -496,8 +1164,13 @@ con nombres unicos.
 Cubren auth (rotacion y deteccion de reuso de refresh tokens, no enumeracion de
 cuentas), reviews (el constraint unico, autoria, moderacion por admin, contadores),
 comentarios (anidamiento de tres niveles, borrado logico que no rompe el hilo, limite
-de profundidad, respuesta a un comentario de otra review) y administracion (roles,
-403 vs 401, las dos protecciones al quitar roles).
+de profundidad, respuesta a un comentario de otra review), administracion (roles,
+403 vs 401, las dos protecciones al quitar roles), seguimientos, actividad y
+notificaciones, las secciones del home y el endpoint de noticias.
+
+Los tests de notificaciones **hacen la accion real** —comentar, votar, seguir— y despues
+miran la campana. Es la unica forma de verificar que el enganche existe: un aviso nunca
+se crea por una llamada directa, siempre es efecto de otra cosa.
 
 ---
 
@@ -507,13 +1180,33 @@ Abrilo en http://localhost:5080 — la Api lo sirve desde `wwwroot`, en el mismo
 
 | Pantalla | Ruta |
 |----------|------|
-| Busqueda de albumes y artistas | `#/?q=...&mode=albums\|artists` |
+| Home: populares, actividad de a quienes seguis y explorar | `#/` |
+| Busqueda unificada (artistas + albumes + canciones) | `#/search?q=...` |
 | Artista con discografia y favoritos | `#/artist/{mbid}` |
 | Album con reviews y formulario | `#/album/{mbid}` |
 | Review con el hilo de comentarios | `#/review/{id}` |
 | Perfil publico | `#/user/{userName}` |
 | Editar perfil propio | `#/me` |
+| Notificaciones | `#/notifications` |
 | Login / registro | `#/login`, `#/register` |
+
+### Cache de los archivos estaticos en desarrollo
+
+`UseStaticFiles` manda `ETag` y `Last-Modified` pero ningun `Cache-Control`, y ante esa
+ausencia el navegador aplica **cache heuristica**: se queda con la copia que tiene sin
+preguntar. Con modulos ES eso no degrada, **rompe**: si `app.js` llega nuevo y `api.js`
+sale de la cache viejo, el import falla en el enlace
+(`does not provide an export named X`) y **no se ejecuta absolutamente nada** —ni la barra
+de navegacion ni el router—. La pagina queda en blanco con un unico error en consola que
+ni siquiera nombra al archivo culpable.
+
+Por eso en desarrollo la respuesta lleva `Cache-Control: no-cache, must-revalidate`.
+`no-cache` no significa "no guardes" sino "guarda pero pregunta antes de usar": el ETag
+sigue trabajando y lo que no cambio vuelve como `304` sin cuerpo. En produccion no se
+toca, porque ahi el cacheo agresivo es lo que se quiere.
+
+Si aparece la pagina en blanco despues de un cambio en el frontend, la primera prueba es
+recargar sin cache (`Ctrl` + `Shift` + `R`).
 
 ### Por que HTML y JS sin framework
 
@@ -526,6 +1219,18 @@ descarta sin arrastrar deuda.
 Se usa **hash routing** (`#/album/...`) a proposito: no necesita fallback del servidor
 para las rutas del cliente, asi que `UseStaticFiles` alcanza y no hay que interceptar
 404 para devolver `index.html`.
+
+### El texto que ve el usuario va acentuado; el codigo no
+
+Los mensajes de error, las validaciones y todo el texto de la interfaz estan escritos en
+castellano correcto, con tildes y con ñ: es lo que el usuario lee, y "resenia" en una
+pantalla se ve como un descuido.
+
+Los **identificadores** —clases, metodos, propiedades, nombres de test— siguen en ASCII a
+proposito. C# admite Unicode en identificadores, pero un `Reseña` en el codigo obliga a
+escribir la ñ para autocompletar, complica cualquier `grep` desde una terminal sin teclado
+español y no aporta nada. La linea es simple: **si lo lee una persona en la pantalla, va
+bien escrito; si lo lee el compilador, va en ASCII.**
 
 ### Todo el DOM se arma con `createElement`
 
@@ -583,6 +1288,8 @@ El Domain no referencia a nadie hacia arriba.
 | `Like` | `int` | Polimorfico `(TargetType, TargetId)`; unico `(UserId, TargetType, TargetId)` |
 | `FavoriteArtist` | `(UserId, ArtistId)` | PK compuesta, sin Id sustituto |
 | `RefreshToken` | `int` | Guarda el hash SHA-256, nunca el token; rotacion con deteccion de reuso |
+| `UserFollow` | `(FollowerId, FollowedId)` | PK compuesta; la relacion es el registro |
+| `Notification` | `int` | `ActorId` nullable para avisos del sistema; `IsRead` + `ReadAt` |
 
 ### Indices
 
@@ -593,6 +1300,9 @@ El Domain no referencia a nadie hacia arriba.
 | `Reviews` | `(UserId, AlbumId)` unico, `(AlbumId, CreatedAt DESC)` | Una review por album; listado por album ordenado |
 | `Comments` | `(ReviewId, CreatedAt)`, `ParentCommentId`, `UserId` | **Traer el hilo completo con un solo `WHERE ReviewId = X`** |
 | `Likes` | `(UserId, TargetType, TargetId)` unico, `(TargetType, TargetId, IsLike)` | Impedir doble voto; contar votos sin joins |
+| `Notifications` | `(RecipientId, CreatedAt DESC, Id DESC)` | Listado paginado por cursor |
+| `Notifications` | `RecipientId` **parcial** `WHERE NOT IsRead` | El contador del globito, sin indexar el historial leido |
+| `Notifications` | `(RecipientId, ActorId, Type, ReviewId, CommentId)` | Encontrar el aviso equivalente para refrescarlo o retirarlo |
 
 ---
 

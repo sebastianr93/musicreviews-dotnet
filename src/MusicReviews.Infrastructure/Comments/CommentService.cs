@@ -5,6 +5,7 @@ using MusicReviews.Application.Comments;
 using MusicReviews.Application.Comments.Dtos;
 using MusicReviews.Application.Common.Interfaces;
 using MusicReviews.Application.Common.Results;
+using MusicReviews.Application.Notifications;
 using MusicReviews.Application.Reviews.Dtos;
 using MusicReviews.Domain.Constants;
 using MusicReviews.Domain.Entities;
@@ -18,17 +19,20 @@ internal sealed class CommentService : ICommentService
 {
     private readonly AppDbContext _context;
     private readonly ICurrentUser _currentUser;
+    private readonly INotificationWriter _notifications;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CommentService> _logger;
 
     public CommentService(
         AppDbContext context,
         ICurrentUser currentUser,
+        INotificationWriter notifications,
         TimeProvider timeProvider,
         ILogger<CommentService> logger)
     {
         _context = context;
         _currentUser = currentUser;
+        _notifications = notifications;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -53,7 +57,7 @@ internal sealed class CommentService : ICommentService
         if (!reviewExists)
         {
             return Result.Failure<IReadOnlyList<CommentNodeDto>>(
-                Error.NotFound("reviews.not_found", "No existe esa review."));
+                Error.NotFound("reviews.not_found", "No existe esa reseña."));
         }
 
         // UNA consulta: todo el hilo, a cualquier profundidad, ordenado
@@ -101,27 +105,34 @@ internal sealed class CommentService : ICommentService
             return Result.Failure<CommentNodeDto>(Unauthenticated());
         }
 
-        if (!await _context.Reviews.AnyAsync(r => r.Id == reviewId, cancellationToken))
+        var review = await _context.Reviews
+            .AsNoTracking()
+            .Where(r => r.Id == reviewId)
+            .Select(r => new { r.Id, r.UserId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (review is null)
         {
             return Result.Failure<CommentNodeDto>(
-                Error.NotFound("reviews.not_found", "No existe esa review."));
+                Error.NotFound("reviews.not_found", "No existe esa reseña."));
         }
 
         var depth = 0;
+        Guid? parentAuthorId = null;
 
         if (request.ParentCommentId is { } parentId)
         {
             var parent = await _context.Comments
                 .AsNoTracking()
                 .Where(c => c.Id == parentId)
-                .Select(c => new { c.Id, c.ReviewId, c.Depth, c.IsDeleted })
+                .Select(c => new { c.Id, c.ReviewId, c.Depth, c.IsDeleted, c.UserId })
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (parent is null)
             {
                 return Result.Failure<CommentNodeDto>(Error.NotFound(
                     "comments.parent_not_found",
-                    "El comentario al que estas respondiendo no existe."));
+                    "El comentario al que estás respondiendo no existe."));
             }
 
             // Sin esta validacion se podria colgar una respuesta de un comentario de
@@ -130,7 +141,7 @@ internal sealed class CommentService : ICommentService
             {
                 return Result.Failure<CommentNodeDto>(Error.Validation(
                     "comments.parent_other_review",
-                    "El comentario al que respondes pertenece a otra review."));
+                    "El comentario al que respondés pertenece a otra reseña."));
             }
 
             if (parent.IsDeleted)
@@ -145,11 +156,12 @@ internal sealed class CommentService : ICommentService
             {
                 return Result.Failure<CommentNodeDto>(Error.Validation(
                     "comments.max_depth",
-                    $"El hilo alcanzo la profundidad maxima de {Comment.MaxDepth} niveles. " +
-                    "Responde a un comentario mas arriba."));
+                    $"El hilo alcanzó la profundidad máxima de {Comment.MaxDepth} niveles. " +
+                    "Respondé a un comentario más arriba."));
             }
 
             depth = parent.Depth + 1;
+            parentAuthorId = parent.UserId;
         }
 
         var comment = new Comment
@@ -168,6 +180,12 @@ internal sealed class CommentService : ICommentService
         _logger.LogInformation(
             "Comentario {CommentId} creado por {UserId} en la review {ReviewId} (profundidad {Depth})",
             comment.Id, userId, reviewId, depth);
+
+        // El aviso va en una segunda escritura porque necesita el Id que acaba de
+        // generar la base. Si fallara, el comentario ya quedo publicado y solo se pierde
+        // el aviso: es la degradacion correcta, y por eso el error se registra sin
+        // propagarse.
+        await NotifyNewCommentAsync(comment, userId, parentAuthorId, review.UserId, cancellationToken);
 
         return await GetByIdAsync(comment.Id, cancellationToken);
     }
@@ -264,6 +282,62 @@ internal sealed class CommentService : ICommentService
     }
 
     // ------------------------------------------------------------------
+    // Avisos
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Un comentario genera un solo aviso.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Si es una respuesta, el aviso va al autor del comentario padre; si es de primer
+    /// nivel, al autor de la reseña. No se avisa a los dos: en un hilo largo el autor
+    /// de la reseña recibiria una notificacion por cada respuesta anidada entre
+    /// terceros, que es exactamente el ruido que hace que la gente deje de mirar la
+    /// campana. Quien quiera seguir el hilo entero lo abre.
+    /// </para>
+    /// <para>
+    /// El fallo del aviso no invalida el comentario, que ya esta guardado. Se registra
+    /// y se sigue.
+    /// </para>
+    /// </remarks>
+    private async Task NotifyNewCommentAsync(
+        Comment comment,
+        Guid actorId,
+        Guid? parentAuthorId,
+        Guid reviewAuthorId,
+        CancellationToken cancellationToken)
+    {
+        var (recipientId, type) = parentAuthorId is { } parentAuthor
+            ? (parentAuthor, NotificationType.CommentReplied)
+            : (reviewAuthorId, NotificationType.ReviewCommented);
+
+        try
+        {
+            await _notifications.NotifyAsync(
+                recipientId,
+                actorId,
+                type,
+                reviewId: comment.ReviewId,
+                commentId: comment.Id,
+                cancellationToken: cancellationToken);
+
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(
+                ex,
+                "No se pudo generar el aviso del comentario {CommentId}. El comentario quedo publicado.",
+                comment.Id);
+
+            // El contexto puede haber quedado con la notificacion pendiente; se descarta
+            // para que no vuelva a intentarse en un guardado posterior de esta request.
+            _context.ChangeTracker.Clear();
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Proyeccion y orden
     // ------------------------------------------------------------------
 
@@ -327,5 +401,5 @@ internal sealed class CommentService : ICommentService
         Error.NotFound("comments.not_found", "No existe ese comentario.");
 
     private static Error Unauthenticated() =>
-        Error.Unauthorized("auth.required", "Tenes que iniciar sesion.");
+        Error.Unauthorized("auth.required", "Tenés que iniciar sesión.");
 }

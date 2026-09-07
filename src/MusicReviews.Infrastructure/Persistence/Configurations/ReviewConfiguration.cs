@@ -33,6 +33,11 @@ public class ReviewConfiguration : IEntityTypeConfiguration<Review>
         builder.HasIndex(r => new { r.AlbumId, r.CreatedAt })
             .IsDescending(false, true);
 
+        // Timeline de actividad. El unico (UserId, AlbumId) no sirve para esto:
+        // ordena por album, no por fecha.
+        builder.HasIndex(r => new { r.UserId, r.CreatedAt })
+            .IsDescending(false, true);
+
         builder.HasOne(r => r.User)
             .WithMany(u => u.Reviews)
             .HasForeignKey(r => r.UserId)

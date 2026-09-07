@@ -36,8 +36,14 @@ public sealed class MusicBrainzOptions
     [Range(0, 5)]
     public int MaxRetries { get; set; } = 3;
 
+    /// <summary>
+    /// Timeout de CADA intento HTTP, no del request completo. El HttpClient de
+    /// MusicBrainz se configura sin timeout global a proposito: la espera en la cola
+    /// de 1 req/seg ocurre dentro de su pipeline y consumiria ese presupuesto sin
+    /// haber hecho todavia ninguna llamada. Ver MusicBrainzThrottlingHandler.
+    /// </summary>
     [Range(1, 120)]
-    public int TimeoutSeconds { get; set; } = 20;
+    public int TimeoutSeconds { get; set; } = 15;
 
     /// <summary>
     /// Dias que una entidad cacheada se considera vigente. Pasado ese plazo,
@@ -50,7 +56,22 @@ public sealed class MusicBrainzOptions
     [Range(1, 1440)]
     public int SearchCacheMinutes { get; set; } = 10;
 
-    /// <summary>Tamanio de la portada que se pide a Cover Art Archive: 250, 500 o 1200.</summary>
+    /// <summary>
+    /// Cuantos resultados se le piden a MusicBrainz por busqueda, antes de reordenar
+    /// y paginar del lado nuestro.
+    /// </summary>
+    /// <remarks>
+    /// Se piden bastantes mas de los que se muestran a proposito. El orden que devuelve
+    /// MusicBrainz es por relevancia textual, y con titulos homonimos —"The Dark Side of
+    /// the Moon" tiene decenas— el disco que el usuario busca puede caer en la posicion
+    /// 45. Reordenar solo la primera pagina no lo traeria nunca. Ademas paginar sale
+    /// gratis: las paginas siguientes se sirven de la misma respuesta cacheada, sin
+    /// consumir otro turno de la cola de 1 req/seg. El maximo que acepta la API es 100.
+    /// </remarks>
+    [Range(20, 100)]
+    public int SearchFetchLimit { get; set; } = 100;
+
+    /// <summary>Tamaño de la portada que se pide a Cover Art Archive: 250, 500 o 1200.</summary>
     [Range(250, 1200)]
     public int CoverArtSize { get; set; } = 500;
 }

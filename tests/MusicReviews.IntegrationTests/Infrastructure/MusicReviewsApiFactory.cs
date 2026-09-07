@@ -6,6 +6,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MusicReviews.Application.Catalog;
+using MusicReviews.Application.News;
+using MusicReviews.Application.Users;
 using Testcontainers.PostgreSql;
 
 namespace MusicReviews.IntegrationTests.Infrastructure;
@@ -72,6 +74,15 @@ public sealed class MusicReviewsApiFactory : WebApplicationFactory<Program>, IAs
         {
             services.RemoveAll<IMusicCatalogService>();
             services.AddScoped<IMusicCatalogService, FakeMusicCatalogService>();
+
+            // Las noticias tampoco salen a internet durante los tests: un medio lento o
+            // caido volveria la suite lenta y roja por algo que no es nuestro.
+            services.RemoveAll<INewsService>();
+            services.AddScoped<INewsService, FakeNewsService>();
+
+            // Los avatares no se escriben en disco durante los tests.
+            services.RemoveAll<IAvatarStorage>();
+            services.AddSingleton<IAvatarStorage, FakeAvatarStorage>();
         });
     }
 

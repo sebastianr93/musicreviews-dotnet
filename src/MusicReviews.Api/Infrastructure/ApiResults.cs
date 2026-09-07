@@ -19,8 +19,16 @@ public static class ApiResults
             ErrorType.Forbidden => StatusCodes.Status403Forbidden,
             ErrorType.NotFound => StatusCodes.Status404NotFound,
             ErrorType.Conflict => StatusCodes.Status409Conflict,
+            ErrorType.Unavailable => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError
         };
+
+        // 503 sin Retry-After invita al cliente a reintentar en bucle sobre un
+        // servicio que ya esta en problemas.
+        if (statusCode == StatusCodes.Status503ServiceUnavailable)
+        {
+            controller.Response.Headers.RetryAfter = "5";
+        }
 
         var problem = new ProblemDetails
         {
@@ -40,11 +48,12 @@ public static class ApiResults
 
     private static string TitleFor(ErrorType type) => type switch
     {
-        ErrorType.Validation => "La solicitud no es valida.",
+        ErrorType.Validation => "La solicitud no es válida.",
         ErrorType.Unauthorized => "No autenticado.",
-        ErrorType.Forbidden => "No tenes permiso para hacer esto.",
+        ErrorType.Forbidden => "No tenés permiso para hacer esto.",
         ErrorType.NotFound => "El recurso no existe.",
-        ErrorType.Conflict => "El estado actual no permite la operacion.",
-        _ => "Ocurrio un error inesperado."
+        ErrorType.Conflict => "El estado actual no permite la operación.",
+        ErrorType.Unavailable => "Servicio no disponible temporalmente.",
+        _ => "Ocurrió un error inesperado."
     };
 }

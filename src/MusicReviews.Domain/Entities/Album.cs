@@ -24,12 +24,12 @@ public class Album
 
     /// <summary>
     /// Fecha de lanzamiento. Nullable porque MusicBrainz devuelve fechas parciales
-    /// (a veces solo el anio); en ese caso se normaliza al 1 de enero y se conserva
+    /// (a veces solo el año); en ese caso se normaliza al 1 de enero y se conserva
     /// <see cref="ReleaseDatePrecision"/> para saber cuanto de la fecha es real.
     /// </summary>
     public DateOnly? ReleaseDate { get; set; }
 
-    /// <summary>Precision de <see cref="ReleaseDate"/>: 0 = desconocida, 1 = anio, 2 = mes, 3 = dia.</summary>
+    /// <summary>Precision de <see cref="ReleaseDate"/>: 0 = desconocida, 1 = año, 2 = mes, 3 = dia.</summary>
     public int ReleaseDatePrecision { get; set; }
 
     /// <summary>Tipo primario segun MusicBrainz: Album, EP, Single, Live, etc.</summary>

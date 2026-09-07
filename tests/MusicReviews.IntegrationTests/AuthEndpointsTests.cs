@@ -149,7 +149,7 @@ public class AuthEndpointsTests : IntegrationTestBase
         Assert.NotNull(newAuth);
         Assert.NotEqual(user.RefreshToken, newAuth.RefreshToken);
 
-        // Reusar el token viejo es senial de robo: se corta la familia entera.
+        // Reusar el token viejo es señal de robo: se corta la familia entera.
         var reused = await client.PostAsJsonAsync("/api/auth/refresh", new
         {
             refreshToken = user.RefreshToken

@@ -9,18 +9,18 @@ public sealed class CreateReviewRequestValidator : AbstractValidator<CreateRevie
     public CreateReviewRequestValidator()
     {
         RuleFor(x => x.AlbumMusicBrainzId)
-            .NotEmpty().WithMessage("Falta el identificador del album.")
+            .NotEmpty().WithMessage("Falta el identificador del álbum.")
             .Must(value => Guid.TryParse(value, out _))
-                .WithMessage("El identificador de MusicBrainz no es un MBID valido.");
+                .WithMessage("El identificador de MusicBrainz no es un MBID válido.");
 
         RuleFor(x => x.Score)
             .InclusiveBetween(Review.MinScore, Review.MaxScore)
             .WithMessage($"El puntaje tiene que estar entre {Review.MinScore} y {Review.MaxScore}.");
 
         RuleFor(x => x.Text)
-            .NotEmpty().WithMessage("La review no puede estar vacia.")
+            .NotEmpty().WithMessage("La reseña no puede estar vacía.")
             .MaximumLength(Review.TextMaxLength)
-            .WithMessage($"La review no puede superar los {Review.TextMaxLength} caracteres.");
+            .WithMessage($"La reseña no puede superar los {Review.TextMaxLength} caracteres.");
     }
 }
 
@@ -33,8 +33,8 @@ public sealed class UpdateReviewRequestValidator : AbstractValidator<UpdateRevie
             .WithMessage($"El puntaje tiene que estar entre {Review.MinScore} y {Review.MaxScore}.");
 
         RuleFor(x => x.Text)
-            .NotEmpty().WithMessage("La review no puede estar vacia.")
+            .NotEmpty().WithMessage("La reseña no puede estar vacía.")
             .MaximumLength(Review.TextMaxLength)
-            .WithMessage($"La review no puede superar los {Review.TextMaxLength} caracteres.");
+            .WithMessage($"La reseña no puede superar los {Review.TextMaxLength} caracteres.");
     }
 }

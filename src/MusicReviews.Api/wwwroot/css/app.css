@@ -128,6 +128,8 @@ textarea.input { resize: vertical; font-family: inherit; }
 .alert { border-radius: var(--radius); padding: .6rem .8rem; margin-top: .8rem; font-size: .9rem; }
 .alert p { margin: .2rem 0; }
 .alert--error { background: rgba(239, 68, 68, .12); border: 1px solid var(--danger); }
+.alert--warn { background: rgba(251, 191, 36, .12); border: 1px solid var(--mid); }
+.alert .btn { margin-top: .5rem; }
 .alert--ok { background: rgba(74, 222, 128, .12); border: 1px solid var(--high); }
 
 .search { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; }
@@ -224,3 +226,288 @@ textarea.input { resize: vertical; font-family: inherit; }
     .comment-list--nested { margin-left: .2rem; }
     .comment { padding-left: .5rem; }
 }
+
+/* ---------------------------------------------------------------- avisos */
+
+.row--between { justify-content: space-between; align-items: baseline; }
+
+.profile-actions { margin-left: auto; }
+
+/* La campana es solo el icono: el nombre lo llevan aria-label y title. */
+.bell { position: relative; display: inline-flex; align-items: center; gap: .3rem; padding: .4rem .5rem; }
+
+.icon { display: block; flex-shrink: 0; }
+
+.badge {
+    min-width: 1.25rem;
+    padding: 0 .35rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: .75rem;
+    font-weight: 700;
+    line-height: 1.25rem;
+    text-align: center;
+}
+
+.badge.is-hidden { display: none; }
+
+.notification-list { list-style: none; margin: 0; padding: 0; }
+
+.notification {
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    padding: .7rem .8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    margin-bottom: .5rem;
+    cursor: pointer;
+}
+
+.notification:hover { background: var(--surface-2); }
+
+/* La barra de color es lo unico que separa leido de no leido: mas contraste que un
+   fondo distinto y no depende de percibir un cambio sutil de luminosidad. */
+.notification.is-unread { border-left: 3px solid var(--accent); }
+
+.notification__body { flex: 1; min-width: 0; }
+
+.avatar--empty { background: var(--surface-2); border-radius: 50%; width: 32px; height: 32px; }
+
+.cover--tiny { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
+
+/* ---------------------------------------------------------------- buscador unificado */
+
+.search-section { margin-bottom: 1.5rem; }
+.search-section h2 { margin-top: 1.2rem; }
+
+/* Una seccion sin resultados no se muestra: ocupa lugar y no dice nada. Mientras
+   carga si se muestra, porque el titulo con su spinner es lo que le avisa al usuario
+   que todavia falta contenido por llegar. */
+.search-section.is-empty { display: none; }
+
+
+/* ---------------------------------------------------------------- home */
+
+.home-section { margin-bottom: 2rem; }
+.home-section h2 { margin-top: 1.6rem; }
+
+/* Una seccion sin contenido se oculta entera. Un home con tres titulos vacios se ve
+   roto aunque tecnicamente este bien. */
+.home-section.is-empty { display: none; }
+
+/* Grilla fluida sin media queries: cada tapa pide 150px minimo y el navegador decide
+   cuantas columnas entran. La tapa es el contenido, asi que manda ella y no un
+   breakpoint elegido a mano. */
+.tile-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 1.1rem;
+}
+
+.tile__link {
+    display: grid;
+    gap: .15rem;
+    color: inherit;
+    text-decoration: none;
+}
+
+.tile__link:hover { text-decoration: none; }
+.tile__link:hover .tile__cover { transform: scale(1.03); }
+.tile__link:hover .tile__title { color: var(--accent-soft); }
+
+/* aspect-ratio mantiene la grilla alineada aunque una portada tarde o no exista:
+   el hueco ya tiene su altura antes de que cargue la imagen, asi que nada salta. */
+.tile__art {
+    position: relative;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+}
+
+.tile__cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform .18s ease;
+}
+
+.tile__cover--empty { background: var(--surface-2); }
+
+.tile__score {
+    position: absolute;
+    right: .4rem;
+    bottom: .4rem;
+    padding: .1rem .4rem;
+    border-radius: 6px;
+    background: rgba(15, 17, 21, .85);
+    font-size: .8rem;
+    font-weight: 700;
+}
+
+.tile__title {
+    margin-top: .4rem;
+    line-height: 1.25;
+    transition: color .18s ease;
+}
+
+/* El centinela del scroll infinito. Necesita altura propia: un div de 0px puede no
+   llegar a intersectar nunca en algunos navegadores. */
+.sentinel { min-height: 1px; padding: 1.5rem 0; text-align: center; }
+
+.activity-list { list-style: none; margin: 0; padding: 0; }
+
+.activity {
+    display: flex;
+    align-items: center;
+    gap: .8rem;
+    padding: .7rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.activity:last-child { border-bottom: none; }
+.activity__body { flex: 1; min-width: 0; }
+
+.activity__excerpt {
+    margin: .3rem 0 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.btn--small { padding: .2rem .6rem; font-size: .85rem; }
+
+@media (max-width: 600px) {
+    .tile-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .8rem; }
+}
+
+/* ---------------------------------------------------------------- noticias */
+
+.news-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+
+.news__link {
+    display: flex;
+    gap: .8rem;
+    align-items: center;
+    padding: .6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: inherit;
+    text-decoration: none;
+}
+
+.news__link:hover { background: var(--surface-2); text-decoration: none; }
+.news__link:hover strong { color: var(--accent-soft); }
+
+.news__image {
+    width: 96px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.news__body { min-width: 0; }
+
+/* Dos lineas y corta. El extracto es para decidir si entrar, no para leer la nota
+   aca: mostrarlo entero seria republicar contenido ajeno. */
+.news__excerpt {
+    margin: .25rem 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+@media (max-width: 600px) {
+    .news__image { width: 72px; height: 56px; }
+}
+
+/* ---------------------------------------------------------------- portadas */
+
+/* El recuadro siempre existe y la imagen va adentro. Las URL de portada se construyen
+   sin comprobar que existan, asi que una parte va a dar 404: con el hueco ya dibujado,
+   la que falla se borra y la grilla no se descuadra. */
+.cover-box {
+    display: inline-block;
+    background: var(--surface-2);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.cover-box__img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.cover--suggest { width: 36px; height: 36px; border-radius: 4px; }
+
+/* ---------------------------------------------------------------- desplegable */
+
+.searchbox { position: relative; flex: 1; min-width: 0; }
+.searchbox .input { width: 100%; }
+
+/* Va por encima de todo lo que sigue en la pagina y no empuja nada: el contenido de
+   atras tiene que quedar donde estaba para que cerrar el desplegable no mueva la vista. */
+.suggest {
+    position: absolute;
+    top: calc(100% + .3rem);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+    overflow: hidden;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.suggest__row {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    width: 100%;
+    padding: .5rem .7rem;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.suggest__row:hover,
+.suggest__row.is-active { background: var(--surface-2); text-decoration: none; }
+
+.suggest__text { display: grid; flex: 1; min-width: 0; }
+.suggest__text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.suggest__row--all { border-top: 1px solid var(--border); color: var(--accent-soft); }
+
+/* ---------------------------------------------------------------- perfil y barra */
+
+.nav-user { display: inline-flex; align-items: center; gap: .4rem; }
+
+/* En pantallas chicas la barra se queda sin lugar: el avatar alcanza para saber
+   de quien es la sesion. */
+@media (max-width: 600px) {
+    .nav-user__name { display: none; }
+}
+
+.artist-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.artist-header .avatar { border-radius: 50%; object-fit: cover; }
+
+.avatar-preview .avatar { border-radius: 50%; object-fit: cover; }
+
+.panel + .panel { margin-top: 1rem; }

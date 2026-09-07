@@ -13,7 +13,7 @@ namespace MusicReviews.Infrastructure.Persistence.Seed;
 /// <remarks>
 /// Las credenciales del admin se leen de la seccion "SeedAdmin" de la configuracion.
 /// Si no estan definidas, no se crea ninguna cuenta: no hay usuario por defecto con
-/// contrasenia conocida, que es la forma habitual de dejar un backdoor abierto sin querer.
+/// contraseña conocida, que es la forma habitual de dejar un backdoor abierto sin querer.
 /// En desarrollo se cargan con user-secrets:
 /// <code>
 /// dotnet user-secrets set "SeedAdmin:Email" "admin@local" --project src/MusicReviews.Api

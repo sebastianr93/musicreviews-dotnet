@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MusicReviews.Application.Catalog;
 using MusicReviews.Application.Catalog.Dtos;
+using MusicReviews.Application.Common.Exceptions;
 using MusicReviews.Application.Common.Models;
 using MusicReviews.Application.Common.Results;
 using MusicReviews.Domain.Entities;
@@ -33,6 +34,12 @@ internal sealed class FakeMusicCatalogService : IMusicCatalogService
     /// <summary>MBID que el fake trata como inexistente, para poder probar el 404.</summary>
     public static readonly string UnknownMusicBrainzId = "00000000-0000-0000-0000-000000000000";
 
+    /// <summary>
+    /// MBID con el que el fake simula que MusicBrainz no responde, para verificar
+    /// que la caida de un tercero salga como 503 y no como 500.
+    /// </summary>
+    public static readonly string UnavailableMusicBrainzId = "11111111-1111-1111-1111-111111111111";
+
     public async Task<Result<ArtistDetailDto>> GetArtistAsync(
         string musicBrainzId,
         CancellationToken cancellationToken = default)
@@ -57,6 +64,11 @@ internal sealed class FakeMusicCatalogService : IMusicCatalogService
         string musicBrainzId,
         CancellationToken cancellationToken = default)
     {
+        if (musicBrainzId == UnavailableMusicBrainzId)
+        {
+            throw ExternalServiceUnavailableException.Timeout("MusicBrainz", TimeSpan.FromSeconds(15));
+        }
+
         if (musicBrainzId == UnknownMusicBrainzId)
         {
             return Result.Failure<AlbumDetailDto>(
@@ -112,6 +124,10 @@ internal sealed class FakeMusicCatalogService : IMusicCatalogService
     public Task<Result<PagedResult<AlbumSummaryDto>>> SearchAlbumsAsync(
         string query, PageRequest page, CancellationToken cancellationToken = default) =>
         Task.FromResult(Result.Success(PagedResult<AlbumSummaryDto>.Empty(page.Page, page.PageSize)));
+
+    public Task<Result<PagedResult<SongSearchItemDto>>> SearchSongsAsync(
+        string query, PageRequest page, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Result.Success(PagedResult<SongSearchItemDto>.Empty(page.Page, page.PageSize)));
 
     public Task<Result<PagedResult<AlbumSummaryDto>>> GetArtistAlbumsAsync(
         string musicBrainzId, PageRequest page, CancellationToken cancellationToken = default) =>

@@ -122,7 +122,7 @@ call GET /api/auth/me
 expect 401 "GET /api/auth/me sin bearer"
 
 call POST /api/auth/login "{\"userNameOrEmail\":\"$EMAIL\",\"password\":\"incorrecta\"}"
-expect 401 "POST /api/auth/login con contrasenia incorrecta"
+expect 401 "POST /api/auth/login con contraseña incorrecta"
 
 call POST /api/auth/login "{\"userNameOrEmail\":\"$EMAIL\",\"password\":\"$PASSWORD\"}"
 expect 200 "POST /api/auth/login por email"
@@ -212,6 +212,30 @@ else
         printf '       consulta, el problema es la comparacion de CachedAt en GetOrCacheAlbumAsync.\n'
     fi
 fi
+
+call GET "/api/catalog/songs?query=smells%20like%20teen%20spirit&pageSize=5"
+expect 200 "GET /api/catalog/songs?query=smells+like+teen+spirit"
+
+SONG_TITLE=$(echo "$BODY" | json_str title)
+if [ -z "$SONG_TITLE" ]; then
+    bad "La busqueda de canciones no devolvio resultados"
+else
+    ok "Cancion encontrada: $SONG_TITLE"
+
+    # MusicBrainz devuelve una grabacion por cada version registrada del tema. Si el
+    # agrupado funciona, un tema muy versionado llega con versionCount > 1.
+    VERSIONS=$(echo "$BODY" | json_num versionCount)
+    [ "${VERSIONS:-0}" -gt 1 ] \
+        && ok "Las grabaciones se agruparon (versionCount: $VERSIONS)" \
+        || printf '  \033[33mSKIP\033[0m El primer resultado trae una sola version\n'
+
+    echo "$BODY" | grep -q '"albumMusicBrainzId":"[0-9a-f-]' \
+        && ok "La cancion lleva a un album" \
+        || bad "La cancion no trae el album al que enlazar"
+fi
+
+call GET "/api/catalog/songs?query="
+expect 400 "GET /api/catalog/songs con query vacia"
 
 call GET "/api/catalog/artists?query="
 expect 400 "GET /api/catalog/artists con query vacia"
@@ -492,6 +516,195 @@ else
 fi
 
 # ---------------------------------------------------------------- users
+
+step "Busqueda instantanea"
+
+call GET "/api/search/quick?q="
+expect 200 "GET /api/search/quick con la consulta vacia (no falla)"
+
+# La busqueda de albumes de mas arriba sembro el catalogo local, asi que el desplegable
+# ya tiene con que responder.
+call GET "/api/search/quick?q=o&limit=8"
+expect 200 "GET /api/search/quick con una sola letra"
+
+if echo "$BODY" | grep -q '"musicBrainzId"'; then
+    ok "El desplegable devuelve sugerencias del catalogo local"
+
+    echo "$BODY" | grep -q '"kind"' \
+        && ok "Cada sugerencia declara si es artista o album" \
+        || bad "Falta kind en las sugerencias"
+else
+    printf '  \033[33mSKIP\033[0m El catalogo local todavia no tiene nada que coincida\n'
+fi
+
+# Sin escapar, "%" haria que el patron quede en %%% y devolviera el catalogo entero.
+call GET "/api/search/quick?q=%25"
+expect 200 "GET /api/search/quick con un comodin de LIKE"
+echo "$BODY" | grep -q '^\[\]$' \
+    && ok "Los comodines de LIKE estan escapados" \
+    || printf '  \033[33mSKIP\033[0m Hay algun titulo con %% en el catalogo\n'
+
+# La siembra: buscar un album deja artistas y albumes en la base.
+call GET "/api/catalog/albums?query=kind%20of%20blue&pageSize=5"
+expect 200 "GET /api/catalog/albums (siembra el catalogo local)"
+call GET "/api/search/quick?q=kind&limit=8"
+expect 200 "GET /api/search/quick despues de la siembra"
+echo "$BODY" | grep -qi 'kind' \
+    && ok "Lo buscado quedo sembrado en el catalogo local" \
+    || printf '  \033[33mSKIP\033[0m La siembra no dejo nada que coincida con \"kind\"\n'
+
+# ---------------------------------------------------------------- cuenta
+
+step "Avatar y contrasenia"
+
+call POST /api/auth/password '{"currentPassword":"x","newPassword":"y"}'
+expect 401 "POST /api/auth/password sin autenticar"
+
+call POST /api/auth/password "{\"currentPassword\":\"$PASSWORD\",\"newPassword\":\"corta\"}" "$ACCESS"
+expect 400 "POST /api/auth/password con una contrasenia nueva debil"
+
+call DELETE /api/users/me/avatar "" "$ACCESS"
+expect 200 "DELETE /api/users/me/avatar (idempotente)"
+
+# La subida es multipart: se manda un PNG minimo (los 8 bytes de la firma).
+printf '\x89PNG\r\n\x1a\n' > /tmp/smoke-avatar.png
+AVATAR_STATUS=$(curl -s -o /tmp/smoke-avatar-out.json -w '%{http_code}' \
+    -X POST "$BASE_URL/api/users/me/avatar" \
+    -H "Authorization: Bearer $ACCESS" \
+    -F "file=@/tmp/smoke-avatar.png;type=image/png")
+[ "$AVATAR_STATUS" = "200" ] \
+    && ok "POST /api/users/me/avatar con un PNG (200)" \
+    || bad "POST /api/users/me/avatar -> esperaba 200, recibi $AVATAR_STATUS"
+grep -q '"avatarUrl":"/avatars/' /tmp/smoke-avatar-out.json \
+    && ok "El perfil quedo apuntando al archivo subido" \
+    || bad "El perfil no quedo apuntando a /avatars/"
+
+# Extension y Content-Type de imagen, contenido que no lo es: tiene que rechazarlo.
+printf '<!DOCTYPE html><script>alert(1)</script>' > /tmp/smoke-avatar-fake.png
+FAKE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+    -X POST "$BASE_URL/api/users/me/avatar" \
+    -H "Authorization: Bearer $ACCESS" \
+    -F "file=@/tmp/smoke-avatar-fake.png;type=image/png")
+[ "$FAKE_STATUS" = "400" ] \
+    && ok "Un HTML disfrazado de PNG se rechaza (400)" \
+    || bad "Un HTML disfrazado de PNG no se rechazo -> recibi $FAKE_STATUS"
+
+step "Home"
+
+call GET "/api/home/popular?pageSize=5"
+expect 200 "GET /api/home/popular"
+echo "$BODY" | grep -q '"items"' \
+    && ok "Populares devuelve una pagina" \
+    || bad "Populares no tiene forma de pagina"
+
+# La review y los comentarios creados mas arriba tienen que haber movido el ranking.
+echo "$BODY" | grep -q '"activityScore"' \
+    && ok "Los albumes traen su puntaje de actividad" \
+    || bad "Falta activityScore en la respuesta"
+
+call GET "/api/home/popular?windowDays=0"
+expect 200 "GET /api/home/popular con una ventana fuera de rango (se recorta)"
+
+call GET "/api/home/explore?pageSize=5"
+expect 200 "GET /api/home/explore (anonimo)"
+echo "$BODY" | grep -q '"musicBrainzId"' \
+    && ok "Explorar devuelve albumes del catalogo" \
+    || bad "Explorar no devolvio ningun album"
+
+call GET "/api/home/explore?pageSize=5" "" "$ACCESS"
+expect 200 "GET /api/home/explore (con sesion)"
+
+if [ -n "${ALBUM_MBID:-}" ]; then
+    # El primer usuario reseñó ALBUM_MBID mas arriba y despues la borro, asi que
+    # explorar tiene que seguir proponiendoselo.
+    call GET "/api/home/explore?pageSize=100" "" "$ACCESS"
+    echo "$BODY" | grep -q "$ALBUM_MBID" \
+        && ok "Explorar propone un album que el usuario no tiene reseñado" \
+        || printf '  \033[33mSKIP\033[0m El album no entro en la primera pagina de explorar\n'
+fi
+
+step "Noticias"
+
+call GET "/api/news?limit=5"
+expect 200 "GET /api/news"
+
+if echo "$BODY" | grep -q '"url"'; then
+    ok "Hay noticias en el agregador"
+
+    # Solo titulo, extracto corto, imagen y enlace a la fuente: nada mas.
+    echo "$BODY" | grep -q '"sourceName"' \
+        && ok "Cada noticia trae el nombre del medio (atribucion)" \
+        || bad "Falta la atribucion de la fuente"
+
+    echo "$BODY" | grep -qE '"url":"https?://' \
+        && ok "Los enlaces son http(s) absolutos" \
+        || bad "Hay un enlace que no es http(s): el parser deberia haberlo descartado"
+else
+    printf '  \033[33mSKIP\033[0m Ningun feed respondio (revisa la seccion News de appsettings)\n'
+fi
+
+call GET "/api/news?limit=0"
+expect 200 "GET /api/news con un limite fuera de rango (se recorta)"
+
+step "Notifications"
+
+call GET /api/notifications
+expect 401 "GET /api/notifications sin autenticar"
+
+if [ -z "${OTHER_ACCESS:-}" ] || [ -z "${THREAD_REVIEW:-}" ]; then
+    bad "Sin review de soporte no se pueden probar los avisos"
+else
+    # THREAD_REVIEW es del segundo usuario y el primero le comento y le voto,
+    # asi que los avisos tienen que estar en la campana del segundo.
+    call GET /api/notifications "" "$OTHER_ACCESS"
+    expect 200 "GET /api/notifications"
+    echo "$BODY" | grep -q '"items"' \
+        && ok "El listado devuelve una pagina por cursor" \
+        || bad "El listado no tiene la forma de pagina por cursor"
+    echo "$BODY" | grep -q '"type":1' \
+        && ok "Comentar la review de otro genero el aviso" \
+        || bad "No aparece el aviso del comentario"
+
+    call GET /api/notifications/unread-count "" "$OTHER_ACCESS"
+    expect 200 "GET /api/notifications/unread-count"
+    UNREAD=$(echo "$BODY" | json_num unread)
+    [ "${UNREAD:-0}" -gt 0 ] \
+        && ok "El contador de no leidos es $UNREAD" \
+        || bad "El contador de no leidos quedo en cero"
+
+    call GET /api/notifications "" "$OTHER_ACCESS"
+    TARGET_NOTIF=$(echo "$BODY" | grep -o '"id":[0-9]*' | head -n 1 | sed 's/.*://')
+
+    if [ -n "${TARGET_NOTIF:-}" ]; then
+        # El aviso ajeno no se puede marcar: el filtro por destinatario va dentro
+        # del UPDATE, y la respuesta es 404 para no confirmar que existe.
+        call POST "/api/notifications/$TARGET_NOTIF/read" "" "$ACCESS"
+        expect 404 "POST /api/notifications/{id}/read sobre un aviso ajeno"
+
+        call POST "/api/notifications/$TARGET_NOTIF/read" "" "$OTHER_ACCESS"
+        expect 204 "POST /api/notifications/{id}/read"
+
+        call POST "/api/notifications/$TARGET_NOTIF/read" "" "$OTHER_ACCESS"
+        expect 204 "POST /api/notifications/{id}/read repetido (idempotente)"
+    fi
+
+    call POST /api/notifications/read-all "" "$OTHER_ACCESS"
+    expect 200 "POST /api/notifications/read-all"
+
+    call GET /api/notifications/unread-count "" "$OTHER_ACCESS"
+    echo "$BODY" | grep -q '"unread":0' \
+        && ok "Despues de read-all no queda nada sin leer" \
+        || bad "read-all no dejo el contador en cero"
+
+    call GET "/api/notifications?unreadOnly=true" "" "$OTHER_ACCESS"
+    expect 200 "GET /api/notifications?unreadOnly=true"
+    echo "$BODY" | grep -q '"items":\[\]' \
+        && ok "unreadOnly ya no devuelve nada" \
+        || bad "unreadOnly devuelve avisos que ya se leyeron"
+
+    call GET "/api/notifications?cursor=basura-que-no-decodifica" "" "$OTHER_ACCESS"
+    expect 200 "GET /api/notifications con un cursor invalido (degrada a la primera pagina)"
+fi
 
 step "Users"
 

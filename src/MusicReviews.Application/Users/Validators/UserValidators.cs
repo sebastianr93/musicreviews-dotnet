@@ -35,6 +35,31 @@ public sealed class AddFavoriteArtistRequestValidator : AbstractValidator<AddFav
         RuleFor(x => x.ArtistMusicBrainzId)
             .NotEmpty().WithMessage("Falta el identificador del artista.")
             .Must(value => Guid.TryParse(value, out _))
-                .WithMessage("El identificador de MusicBrainz no es un MBID valido.");
+                .WithMessage("El identificador de MusicBrainz no es un MBID válido.");
+    }
+}
+
+/// <summary>
+/// Cambio de contraseña. Las reglas de la nueva son las mismas del registro: si aca
+/// fueran mas laxas, cambiar la contraseña seria la forma de esquivarlas.
+/// </summary>
+public sealed class ChangePasswordRequestValidator : AbstractValidator<ChangePasswordRequest>
+{
+    public ChangePasswordRequestValidator()
+    {
+        RuleFor(x => x.CurrentPassword)
+            .NotEmpty().WithMessage("Indicá tu contraseña actual.");
+
+        RuleFor(x => x.NewPassword)
+            .NotEmpty().WithMessage("La contraseña es obligatoria.")
+            .MinimumLength(8).WithMessage("La contraseña tiene que tener al menos 8 caracteres.")
+            .MaximumLength(128)
+            .Matches("[A-Z]").WithMessage("La contraseña tiene que incluir al menos una mayúscula.")
+            .Matches("[a-z]").WithMessage("La contraseña tiene que incluir al menos una minúscula.")
+            .Matches("[0-9]").WithMessage("La contraseña tiene que incluir al menos un dígito.");
+
+        RuleFor(x => x.NewPassword)
+            .NotEqual(x => x.CurrentPassword)
+            .WithMessage("La contraseña nueva tiene que ser distinta de la actual.");
     }
 }

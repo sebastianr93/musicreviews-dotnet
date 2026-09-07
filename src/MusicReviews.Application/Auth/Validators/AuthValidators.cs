@@ -18,20 +18,20 @@ public sealed partial class RegisterRequestValidator : AbstractValidator<Registe
             .MaximumLength(32).WithMessage("El nombre de usuario no puede superar los 32 caracteres.")
             .Must(value => UserNameRegex().IsMatch(value))
                 .When(x => !string.IsNullOrWhiteSpace(x.UserName))
-                .WithMessage("El nombre de usuario solo admite letras, digitos y los simbolos - . _ @ +");
+                .WithMessage("El nombre de usuario solo admite letras, dígitos y los símbolos - . _ @ +");
 
         RuleFor(x => x.Email)
             .NotEmpty().WithMessage("El email es obligatorio.")
-            .EmailAddress().WithMessage("El email no tiene un formato valido.")
+            .EmailAddress().WithMessage("El email no tiene un formato válido.")
             .MaximumLength(256);
 
         RuleFor(x => x.Password)
-            .NotEmpty().WithMessage("La contrasenia es obligatoria.")
-            .MinimumLength(8).WithMessage("La contrasenia tiene que tener al menos 8 caracteres.")
+            .NotEmpty().WithMessage("La contraseña es obligatoria.")
+            .MinimumLength(8).WithMessage("La contraseña tiene que tener al menos 8 caracteres.")
             .MaximumLength(128)
-            .Matches("[A-Z]").WithMessage("La contrasenia tiene que incluir al menos una mayuscula.")
-            .Matches("[a-z]").WithMessage("La contrasenia tiene que incluir al menos una minuscula.")
-            .Matches("[0-9]").WithMessage("La contrasenia tiene que incluir al menos un digito.");
+            .Matches("[A-Z]").WithMessage("La contraseña tiene que incluir al menos una mayúscula.")
+            .Matches("[a-z]").WithMessage("La contraseña tiene que incluir al menos una minúscula.")
+            .Matches("[0-9]").WithMessage("La contraseña tiene que incluir al menos un dígito.");
     }
 }
 
@@ -40,11 +40,11 @@ public sealed class LoginRequestValidator : AbstractValidator<LoginRequest>
     public LoginRequestValidator()
     {
         RuleFor(x => x.UserNameOrEmail)
-            .NotEmpty().WithMessage("Indica tu usuario o email.")
+            .NotEmpty().WithMessage("Indicá tu usuario o email.")
             .MaximumLength(256);
 
         RuleFor(x => x.Password)
-            .NotEmpty().WithMessage("La contrasenia es obligatoria.")
+            .NotEmpty().WithMessage("La contraseña es obligatoria.")
             .MaximumLength(128);
     }
 }

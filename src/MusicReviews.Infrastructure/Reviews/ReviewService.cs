@@ -152,13 +152,13 @@ internal sealed class ReviewService : IReviewService
         {
             // El indice unico (UserId, AlbumId) es el que sostiene la regla, no un
             // SELECT previo: entre el chequeo y el insert cabe otra request del mismo
-            // usuario (doble click, dos pestanias) y la base es la unica que puede
+            // usuario (doble click, dos pestañas) y la base es la unica que puede
             // decidir sin condicion de carrera.
             _context.Entry(review).State = EntityState.Detached;
 
             return Result.Failure<ReviewDto>(Error.Conflict(
                 "reviews.already_exists",
-                "Ya escribiste una review de este album. Editala en vez de crear otra."));
+                "Ya escribiste una reseña de este álbum. Editala en vez de crear otra."));
         }
 
         _logger.LogInformation(
@@ -192,7 +192,7 @@ internal sealed class ReviewService : IReviewService
         {
             return Result.Failure<ReviewDto>(Error.Forbidden(
                 "reviews.not_owner",
-                "Solo el autor puede editar su review."));
+                "Solo el autor puede editar su reseña."));
         }
 
         review.Score = request.Score;
@@ -225,7 +225,7 @@ internal sealed class ReviewService : IReviewService
         {
             return Result.Failure(Error.Forbidden(
                 "reviews.not_owner",
-                "Solo el autor o un administrador pueden borrar esta review."));
+                "Solo el autor o un administrador pueden borrar esta reseña."));
         }
 
         // Los comentarios caen por cascada desde la FK. Los likes no: la relacion
@@ -368,10 +368,10 @@ internal sealed class ReviewService : IReviewService
     }
 
     private static Error NotFound() =>
-        Error.NotFound("reviews.not_found", "No existe esa review.");
+        Error.NotFound("reviews.not_found", "No existe esa reseña.");
 
     private static Error Unauthenticated() =>
-        Error.Unauthorized("auth.required", "Tenes que iniciar sesion.");
+        Error.Unauthorized("auth.required", "Tenés que iniciar sesión.");
 
     private static bool IsUniqueViolation(DbUpdateException ex) =>
         ex.InnerException is PostgresException { SqlState: UniqueViolationSqlState };

@@ -4,21 +4,30 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using MusicReviews.Application.Activity;
 using MusicReviews.Application.Admin;
 using MusicReviews.Application.Auth;
 using MusicReviews.Application.Comments;
+using MusicReviews.Application.Home;
 using MusicReviews.Application.Likes;
+using MusicReviews.Application.Notifications;
 using MusicReviews.Application.Reviews;
+using MusicReviews.Application.Search;
 using MusicReviews.Application.Users;
 using MusicReviews.Domain.Constants;
 using MusicReviews.Domain.Entities;
+using MusicReviews.Infrastructure.Activity;
 using MusicReviews.Infrastructure.Admin;
 using MusicReviews.Infrastructure.Catalog;
 using MusicReviews.Infrastructure.Comments;
+using MusicReviews.Infrastructure.Home;
 using MusicReviews.Infrastructure.Identity;
 using MusicReviews.Infrastructure.Likes;
+using MusicReviews.Infrastructure.News;
+using MusicReviews.Infrastructure.Notifications;
 using MusicReviews.Infrastructure.Persistence;
 using MusicReviews.Infrastructure.Reviews;
+using MusicReviews.Infrastructure.Search;
 using MusicReviews.Infrastructure.Users;
 
 namespace MusicReviews.Infrastructure;
@@ -53,6 +62,8 @@ public static class DependencyInjection
             .AddIdentityServices()
             .AddJwtAuthentication(configuration)
             .AddCatalog(configuration)
+            .AddNews(configuration)
+            .AddAvatars(configuration)
             .AddApplicationServices();
 
         return services;
@@ -152,6 +163,25 @@ public static class DependencyInjection
         return services;
     }
 
+    /// <summary>
+    /// Almacenamiento de avatares. La carpeta se crea al guardar el primero, no aca:
+    /// arrancar la aplicacion no deberia tocar el disco por algo que quizas nadie use.
+    /// </summary>
+    private static IServiceCollection AddAvatars(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services
+            .AddOptions<AvatarOptions>()
+            .Bind(configuration.GetSection(AvatarOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddSingleton<IAvatarStorage, AvatarStorage>();
+
+        return services;
+    }
+
     private static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
         services.AddScoped<ITokenService, TokenService>();
@@ -161,6 +191,16 @@ public static class DependencyInjection
         services.AddScoped<ILikeService, LikeService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IAdminService, AdminService>();
+        services.AddScoped<IActivityService, ActivityService>();
+        services.AddScoped<IHomeService, HomeService>();
+        services.AddScoped<IQuickSearchService, QuickSearchService>();
+
+        // Una sola implementacion detras de dos interfaces, registrada por su tipo
+        // concreto y reenviada: asi el servicio que escribe el aviso y el que lo lee son
+        // la misma instancia dentro de la request, y el reenvio no crea una segunda.
+        services.AddScoped<NotificationService>();
+        services.AddScoped<INotificationService>(sp => sp.GetRequiredService<NotificationService>());
+        services.AddScoped<INotificationWriter>(sp => sp.GetRequiredService<NotificationService>());
 
         return services;
     }

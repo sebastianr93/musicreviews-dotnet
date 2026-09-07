@@ -130,6 +130,31 @@ public class ReviewEndpointsTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Create_ConElCatalogoCaido_Devuelve503YNo500()
+    {
+        var user = await CreateUserAsync();
+
+        var response = await user.Client.PostAsJsonAsync(
+            "/api/reviews", NewReview(FakeMusicCatalogService.UnavailableMusicBrainzId));
+
+        // Que un tercero se caiga no es un bug de la aplicacion: 503 le dice al
+        // cliente que reintentar sirve, 500 le diria que algo esta roto.
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Contains("external_service_unavailable", body);
+        Assert.Contains("MusicBrainz", body);
+
+        // Sin Retry-After, un cliente reintenta en bucle sobre un servicio que ya
+        // esta en problemas.
+        Assert.NotNull(response.Headers.RetryAfter);
+
+        // El stack trace no viaja al cliente ni en Development.
+        Assert.DoesNotContain("at MusicReviews.", body);
+    }
+
+    [Fact]
     public async Task Update_PorQuienNoEsElAutor_DevuelveForbidden()
     {
         var author = await CreateUserAsync("author");

@@ -25,6 +25,16 @@ public interface IMusicCatalogService
         PageRequest page,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Busca canciones. Las grabaciones que MusicBrainz devuelve por separado —el
+    /// master, cada remasterizacion, cada version en vivo— se colapsan en un resultado
+    /// por tema. Ver <see cref="SongSearchGrouping"/>.
+    /// </summary>
+    Task<Result<PagedResult<SongSearchItemDto>>> SearchSongsAsync(
+        string query,
+        PageRequest page,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Detalle de artista. Lo cachea localmente si no estaba.</summary>
     Task<Result<ArtistDetailDto>> GetArtistAsync(
         string musicBrainzId,

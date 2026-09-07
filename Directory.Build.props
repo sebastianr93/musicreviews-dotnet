@@ -6,8 +6,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- CS1591: falta comentario XML en miembro publico. Ruido innecesario en un proyecto de este tamano. -->
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!--
+      CS1591: falta comentario XML en miembro publico.
+      CS1573: hay <param> para algunos parametros pero no para todos.
+
+      Los dos se silencian por la misma razon: en este proyecto los comentarios explican
+      lo que NO se deduce leyendo la firma. Documentar `cancellationToken` o `page` para
+      callar al compilador seria escribir ruido, y exigir que si se documenta uno se
+      documenten todos empuja exactamente a eso.
+    -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

@@ -9,13 +9,13 @@ public sealed class CreateCommentRequestValidator : AbstractValidator<CreateComm
     public CreateCommentRequestValidator()
     {
         RuleFor(x => x.Text)
-            .NotEmpty().WithMessage("El comentario no puede estar vacio.")
+            .NotEmpty().WithMessage("El comentario no puede estar vacío.")
             .MaximumLength(Comment.TextMaxLength)
             .WithMessage($"El comentario no puede superar los {Comment.TextMaxLength} caracteres.");
 
         RuleFor(x => x.ParentCommentId)
             .GreaterThan(0).When(x => x.ParentCommentId.HasValue)
-            .WithMessage("El identificador del comentario padre no es valido.");
+            .WithMessage("El identificador del comentario padre no es válido.");
     }
 }
 
@@ -24,7 +24,7 @@ public sealed class UpdateCommentRequestValidator : AbstractValidator<UpdateComm
     public UpdateCommentRequestValidator()
     {
         RuleFor(x => x.Text)
-            .NotEmpty().WithMessage("El comentario no puede estar vacio.")
+            .NotEmpty().WithMessage("El comentario no puede estar vacío.")
             .MaximumLength(Comment.TextMaxLength)
             .WithMessage($"El comentario no puede superar los {Comment.TextMaxLength} caracteres.");
     }

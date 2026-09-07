@@ -22,6 +22,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     public DbSet<Like> Likes => Set<Like>();
     public DbSet<FavoriteArtist> FavoriteArtists => Set<FavoriteArtist>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<UserFollow> UserFollows => Set<UserFollow>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

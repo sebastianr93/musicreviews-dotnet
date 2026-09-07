@@ -373,9 +373,10 @@ namespace MusicReviews.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ParentCommentId");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("ReviewId", "CreatedAt");
+
+                    b.HasIndex("UserId", "CreatedAt")
+                        .IsDescending(false, true);
 
                     b.ToTable("Comments", (string)null);
                 });
@@ -423,12 +424,72 @@ namespace MusicReviews.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("UserId", "CreatedAt")
+                        .IsDescending(false, true);
+
                     b.HasIndex("TargetType", "TargetId", "IsLike");
 
                     b.HasIndex("UserId", "TargetType", "TargetId")
                         .IsUnique();
 
                     b.ToTable("Likes", (string)null);
+                });
+
+            modelBuilder.Entity("MusicReviews.Domain.Entities.Notification", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("CommentId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool?>("IsLike")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsRead")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTimeOffset?>("ReadAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RecipientId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("ReviewId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("CommentId");
+
+                    b.HasIndex("RecipientId")
+                        .HasDatabaseName("IX_Notifications_RecipientId_Unread")
+                        .HasFilter("NOT \"IsRead\"");
+
+                    b.HasIndex("ReviewId");
+
+                    b.HasIndex("RecipientId", "CreatedAt", "Id")
+                        .IsDescending(false, true, true);
+
+                    b.HasIndex("RecipientId", "ActorId", "Type", "ReviewId", "CommentId");
+
+                    b.ToTable("Notifications", (string)null);
                 });
 
             modelBuilder.Entity("MusicReviews.Domain.Entities.RefreshToken", b =>
@@ -516,9 +577,37 @@ namespace MusicReviews.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId", "AlbumId")
                         .IsUnique();
 
+                    b.HasIndex("UserId", "CreatedAt")
+                        .IsDescending(false, true);
+
                     b.ToTable("Reviews", null, t =>
                         {
                             t.HasCheckConstraint("CK_Reviews_Score_Range", "\"Score\" >= 0 AND \"Score\" <= 100");
+                        });
+                });
+
+            modelBuilder.Entity("MusicReviews.Domain.Entities.UserFollow", b =>
+                {
+                    b.Property<Guid>("FollowerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FollowedId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("FollowerId", "FollowedId");
+
+                    b.HasIndex("FollowedId", "CreatedAt")
+                        .IsDescending(false, true);
+
+                    b.HasIndex("FollowerId", "CreatedAt")
+                        .IsDescending(false, true);
+
+                    b.ToTable("UserFollows", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_UserFollows_NoSelfFollow", "\"FollowerId\" <> \"FollowedId\"");
                         });
                 });
 
@@ -640,6 +729,38 @@ namespace MusicReviews.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("MusicReviews.Domain.Entities.Notification", b =>
+                {
+                    b.HasOne("MusicReviews.Domain.Entities.ApplicationUser", "Actor")
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("MusicReviews.Domain.Entities.Comment", "Comment")
+                        .WithMany()
+                        .HasForeignKey("CommentId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("MusicReviews.Domain.Entities.ApplicationUser", "Recipient")
+                        .WithMany("Notifications")
+                        .HasForeignKey("RecipientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MusicReviews.Domain.Entities.Review", "Review")
+                        .WithMany()
+                        .HasForeignKey("ReviewId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Actor");
+
+                    b.Navigation("Comment");
+
+                    b.Navigation("Recipient");
+
+                    b.Navigation("Review");
+                });
+
             modelBuilder.Entity("MusicReviews.Domain.Entities.RefreshToken", b =>
                 {
                     b.HasOne("MusicReviews.Domain.Entities.ApplicationUser", "User")
@@ -670,6 +791,25 @@ namespace MusicReviews.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("MusicReviews.Domain.Entities.UserFollow", b =>
+                {
+                    b.HasOne("MusicReviews.Domain.Entities.ApplicationUser", "Followed")
+                        .WithMany("Followers")
+                        .HasForeignKey("FollowedId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MusicReviews.Domain.Entities.ApplicationUser", "Follower")
+                        .WithMany("Following")
+                        .HasForeignKey("FollowerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Followed");
+
+                    b.Navigation("Follower");
+                });
+
             modelBuilder.Entity("MusicReviews.Domain.Entities.Album", b =>
                 {
                     b.Navigation("Reviews");
@@ -681,7 +821,13 @@ namespace MusicReviews.Infrastructure.Persistence.Migrations
 
                     b.Navigation("FavoriteArtists");
 
+                    b.Navigation("Followers");
+
+                    b.Navigation("Following");
+
                     b.Navigation("Likes");
+
+                    b.Navigation("Notifications");
 
                     b.Navigation("RefreshTokens");
 

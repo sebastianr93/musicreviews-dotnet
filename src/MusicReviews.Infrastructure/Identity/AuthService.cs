@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MusicReviews.Application.Auth;
 using MusicReviews.Application.Auth.Dtos;
+using MusicReviews.Application.Common.Interfaces;
 using MusicReviews.Application.Common.Results;
+using MusicReviews.Application.Users.Dtos;
 using MusicReviews.Domain.Constants;
 using MusicReviews.Domain.Entities;
 using MusicReviews.Infrastructure.Persistence;
@@ -16,6 +18,7 @@ public sealed class AuthService : IAuthService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly AppDbContext _context;
     private readonly ITokenService _tokenService;
+    private readonly ICurrentUser _currentUser;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AuthService> _logger;
 
@@ -23,12 +26,14 @@ public sealed class AuthService : IAuthService
         UserManager<ApplicationUser> userManager,
         AppDbContext context,
         ITokenService tokenService,
+        ICurrentUser currentUser,
         TimeProvider timeProvider,
         ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _context = context;
         _tokenService = tokenService;
+        _currentUser = currentUser;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -50,7 +55,7 @@ public sealed class AuthService : IAuthService
         if (await _userManager.FindByNameAsync(userName) is not null)
         {
             return Result.Failure<AuthResponse>(
-                Error.Conflict("auth.username_taken", "Ese nombre de usuario ya esta en uso."));
+                Error.Conflict("auth.username_taken", "Ese nombre de usuario ya está en uso."));
         }
 
         var user = new ApplicationUser
@@ -87,11 +92,11 @@ public sealed class AuthService : IAuthService
             ? await _userManager.FindByEmailAsync(identifier)
             : await _userManager.FindByNameAsync(identifier);
 
-        // Mismo mensaje para "usuario inexistente" y "contrasenia incorrecta":
+        // Mismo mensaje para "usuario inexistente" y "contraseña incorrecta":
         // discriminar permite enumerar cuentas validas.
         var invalidCredentials = Error.Unauthorized(
             "auth.invalid_credentials",
-            "Usuario o contrasenia incorrectos.");
+            "Usuario o contraseña incorrectos.");
 
         if (user is null)
         {
@@ -102,7 +107,7 @@ public sealed class AuthService : IAuthService
         {
             return Result.Failure<AuthResponse>(Error.Forbidden(
                 "auth.locked_out",
-                "La cuenta esta bloqueada temporalmente por intentos fallidos. Volve a probar en unos minutos."));
+                "La cuenta está bloqueada temporalmente por intentos fallidos. Volvé a probar en unos minutos."));
         }
 
         if (!await _userManager.CheckPasswordAsync(user, request.Password))
@@ -131,7 +136,7 @@ public sealed class AuthService : IAuthService
 
         var invalidToken = Error.Unauthorized(
             "auth.invalid_refresh_token",
-            "El refresh token no es valido.");
+            "El refresh token no es válido.");
 
         if (stored is null)
         {
@@ -155,7 +160,7 @@ public sealed class AuthService : IAuthService
         {
             return Result.Failure<AuthResponse>(Error.Unauthorized(
                 "auth.refresh_token_expired",
-                "El refresh token vencio. Inicia sesion de nuevo."));
+                "El refresh token venció. Iniciá sesión de nuevo."));
         }
 
         var replacement = _tokenService.CreateRefreshToken();
@@ -231,6 +236,53 @@ public sealed class AuthService : IAuthService
                 [.. roles]));
 
         return Result.Success(response);
+    }
+
+    public async Task<Result> ChangePasswordAsync(
+        ChangePasswordRequest request,
+        string? ipAddress,
+        CancellationToken cancellationToken = default)
+    {
+        if (_currentUser.UserId is not { } userId)
+        {
+            return Result.Failure(Error.Unauthorized("auth.required", "Tenés que iniciar sesión."));
+        }
+
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+
+        if (user is null)
+        {
+            return Result.Failure(Error.NotFound("users.not_found", "No existe ese usuario."));
+        }
+
+        var result = await _userManager.ChangePasswordAsync(
+            user, request.CurrentPassword, request.NewPassword);
+
+        if (!result.Succeeded)
+        {
+            // El mensaje no distingue entre "la actual es incorrecta" y "la nueva no
+            // cumple las reglas": Identity ya devuelve el detalle y repetirlo aca solo
+            // agrega una forma de contarle a alguien si acerto la contraseña.
+            var detalle = string.Join(" ", result.Errors.Select(e => e.Description));
+
+            _logger.LogInformation("Cambio de contraseña rechazado para {UserId}", userId);
+
+            return Result.Failure(Error.Validation(
+                "auth.password_change_failed",
+                string.IsNullOrWhiteSpace(detalle)
+                    ? "No se pudo cambiar la contraseña."
+                    : detalle));
+        }
+
+        // Se revocan TODAS las sesiones, incluida la que hizo el cambio. Cambiar la
+        // contraseña se hace, casi siempre, porque se sospecha que alguien mas entro:
+        // si los refresh tokens viejos siguieran renovandose, el cambio no serviria
+        // para nada.
+        await RevokeAllActiveTokensAsync(userId, ipAddress, _timeProvider.GetUtcNow(), cancellationToken);
+
+        _logger.LogInformation("Contraseña cambiada por {UserId}; se revocaron sus sesiones", userId);
+
+        return Result.Success();
     }
 
     private async Task RevokeAllActiveTokensAsync(

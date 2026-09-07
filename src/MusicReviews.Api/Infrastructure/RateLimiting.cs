@@ -17,6 +17,14 @@ public static class RateLimitPolicies
 
     /// <summary>Politica general para el resto de la Api publica.</summary>
     public const string Default = "default";
+
+    /// <summary>
+    /// Politica del desplegable de busqueda. Es la mas holgada porque es la unica ruta
+    /// que se dispara con cada tecla, y porque no sale a ningun lado: es una consulta
+    /// acotada a Postgres. Con el limite general, escribir dos frases seguidas agotaria
+    /// la cuota del usuario para todo lo demas.
+    /// </summary>
+    public const string Suggest = "suggest";
 }
 
 public static class RateLimiting
@@ -49,6 +57,16 @@ public static class RateLimiting
                         QueueLimit = 0
                     }));
 
+            options.AddPolicy(RateLimitPolicies.Suggest, httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    GetPartitionKey(httpContext),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 600,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
             options.OnRejected = async (context, cancellationToken) =>
             {
                 if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
@@ -61,7 +79,7 @@ public static class RateLimiting
                 {
                     Status = StatusCodes.Status429TooManyRequests,
                     Title = "Demasiadas solicitudes.",
-                    Detail = "Superaste el limite de peticiones. Volve a intentar en unos segundos.",
+                    Detail = "Superaste el límite de peticiones. Volvé a intentar en unos segundos.",
                     Instance = context.HttpContext.Request.Path
                 };
 
