@@ -1,0 +1,20 @@
+# Normaliza los finales de linea en el indice.
+#
+# Sin esto, las herramientas de Windows (Visual Studio, dotnet-ef) reescriben archivos
+# generados con CRLF y git los reporta como modificados por completo aunque no haya un
+# solo cambio real: las migraciones aparecian con 6000 lineas tocadas cada vez que se
+# regeneraba el snapshot.
+* text=auto eol=lf
+
+# Scripts que se ejecutan en Linux: CRLF los rompe.
+*.sh   text eol=lf
+Dockerfile text eol=lf
+
+# Archivos que git no debe tocar.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.gif  binary
+*.ico  binary
+*.pfx  binary
