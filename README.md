@@ -1,30 +1,45 @@
 # MusicReviews
 
+[![CI](https://github.com/sebastianr93/musicreviews-dotnet/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianr93/musicreviews-dotnet/actions/workflows/ci.yml)
+
 Aplicacion web de reviews y ratings de musica (albumes y artistas), estilo RateYourMusic / Letterboxd.
 Backend API-first en ASP.NET Core 10 sobre PostgreSQL, con catalogo alimentado por MusicBrainz + Cover Art Archive.
 
+**Demo:** _pendiente de publicar_ · **Documentacion de la Api:** `/scalar/v1` sobre la instancia desplegada
+
+La [especificacion tecnica](docs/especificacion-tecnica.md) describe la arquitectura,
+el modelo de datos y las decisiones de diseño. Este documento es la guia de uso y el
+detalle de implementacion de cada modulo.
+
 ---
 
-## Estado
+## Funcionalidad
 
-| Fase | Alcance | Estado |
-|------|---------|--------|
-| 1 | Dominio, `DbContext`, configuraciones EF, migracion inicial, infraestructura Docker | Completa |
-| 2 | Auth: Identity + JWT + refresh tokens, roles `User` / `Admin` | Completa |
-| 3 | Catalogo: cliente MusicBrainz con cache y throttling | Completa |
-| 4 | Reviews: CRUD y listados con proyecciones agregadas | Completa |
-| 5 | Comments: arbol anidado sin N+1 + tests unitarios | Completa |
-| 6 | Likes y modulo de usuarios (perfil, favoritos) | Completa |
-| 7 | Admin: moderacion, roles, estadisticas + tests de integracion | Completa |
-| 8 | Frontend minimo usable | Completa |
-| 9 | Social: seguir usuarios | Completa |
-| 10 | Actividad de usuario y feed de a quienes seguis | Completa |
-| 11 | Notificaciones | Completa |
-| 12 | Busqueda unificada, con canciones | Completa |
-| 13 | Home tipo feed | Completa |
-| 14 | Noticias por RSS | Completa |
-| 15 | Buscador instantáneo, foto de artista, portadas en todos los listados, avatar y contraseña | **En curso** |
-| 16 | Perfil privado con aprobación de seguidores | Pendiente |
+**Catalogo.** Busqueda unificada de artistas, albumes y canciones contra MusicBrainz, con
+cache local en PostgreSQL, portadas de Cover Art Archive y fotos de artista resueltas via
+Wikidata. Las grabaciones duplicadas que MusicBrainz devuelve por separado se agrupan en
+un resultado por tema.
+
+**Reviews y comentarios.** Puntaje de 0 a 100 y texto, una review por usuario y album,
+con hilo de comentarios anidados resuelto en una sola consulta y borrado logico para no
+romper el arbol.
+
+**Social.** Seguir usuarios, feed de la actividad de a quienes se sigue, votos positivos
+y negativos sobre reviews y comentarios, perfiles con artistas favoritos y avatar propio.
+
+**Avisos.** Notificaciones persistidas con contador de no leidos sobre indice parcial y
+paginacion por cursor.
+
+**Home.** Populares por actividad de los ultimos treinta dias, feed de seguidos, catalogo
+para explorar y titulares de prensa musical por RSS (titulo, extracto, imagen y enlace a
+la fuente).
+
+**Administracion.** Moderacion de reviews y comentarios, gestion de roles y estadisticas.
+
+### Proximos pasos
+
+- Perfil privado con aprobacion de seguidores.
+- Identidad visual propia y paleta derivada de la portada.
 
 ---
 
@@ -36,8 +51,6 @@ Backend API-first en ASP.NET Core 10 sobre PostgreSQL, con catalogo alimentado p
 
 ```bash
 dotnet tool install --global dotnet-ef
-# o, si ya la tenias de una version anterior:
-dotnet tool update --global dotnet-ef
 ```
 
 ---
@@ -69,35 +82,19 @@ dotnet restore
 dotnet build
 ```
 
-> **En Windows, para la API antes de compilar.** Si `dotnet run` esta activo, el build
-> falla al copiar los DLL (`El archivo se ha bloqueado por: MusicReviews.Api`) y queda
-> corriendo el binario anterior. Los endpoints nuevos responden 404 y parece un bug del
-> codigo. `scripts/smoke-test.sh` detecta esa situacion y avisa antes de correr nada.
+### 3. Aplicar las migraciones
 
-### 3. Generar y aplicar la migracion inicial
-
-La migracion vive en el proyecto de Infrastructure; el proyecto de arranque es la Api,
-porque es el que registra el `DbContext` en el contenedor de dependencias.
+Las migraciones estan versionadas en el repositorio. Viven en el proyecto de
+Infrastructure y el proyecto de arranque es la Api, porque es el que registra el
+`DbContext` en el contenedor de dependencias:
 
 ```bash
-dotnet ef migrations add InitialCreate ^
-  --project src/MusicReviews.Infrastructure ^
-  --startup-project src/MusicReviews.Api ^
-  --output-dir Persistence/Migrations
+dotnet ef database update --project src/MusicReviews.Infrastructure --startup-project src/MusicReviews.Api
 ```
 
-> En PowerShell el caracter de continuacion de linea es `` ` `` (backtick); en CMD es `^`.
-> Tambien podes escribir todo el comando en una sola linea.
-
-```bash
-dotnet ef database update ^
-  --project src/MusicReviews.Infrastructure ^
-  --startup-project src/MusicReviews.Api
-```
-
-En Development la Api tambien aplica las migraciones pendientes al arrancar
-(`DatabaseInitializer.MigrateAsync`), asi que el `database update` explicito solo hace falta
-la primera vez o cuando quieras aplicar sin levantar la Api.
+La Api tambien aplica las migraciones pendientes al arrancar, asi que este paso explicito
+solo hace falta para preparar la base sin levantar el servicio. Se puede desactivar con
+`Database:MigrateOnStartup=false`.
 
 ### 4. Correr la Api
 
@@ -111,8 +108,8 @@ dotnet run --project src/MusicReviews.Api
 | Documento OpenAPI | http://localhost:5080/openapi/v1.json |
 | Health check | http://localhost:5080/api/health |
 
-`GET /api/health` devuelve `database: "up"` solo si la conexion a Postgres funciona:
-es la forma rapida de confirmar que la fase 1 quedo cerrada de punta a punta.
+`GET /api/health` devuelve `database: "up"` solo si la conexion a Postgres funciona.
+Es lo que consulta la plataforma de hosting para decidir si el despliegue quedo sano.
 
 ---
 
@@ -916,18 +913,50 @@ está en la lista a propósito**: es una imagen legítima, pero es XML y admite 
 adentro.
 
 La otra mitad de la defensa está al servir: los avatares salen con
-`X-Content-Type-Options: nosniff` y con un mapa de tipos limitado a esos cuatro. Sin
-`nosniff`, el navegador puede ignorar el `Content-Type` y decidir por su cuenta.
+`X-Content-Type-Options: nosniff`, y el `Content-Type` de la respuesta es el que se dedujo
+de los bytes al subir, no el que sugiere la extensión de la URL. Sin `nosniff`, el
+navegador puede ignorar el `Content-Type` y decidir por su cuenta.
 
-Los archivos van a una **carpeta configurable fuera de `wwwroot`**: ahí adentro quedarían
-dentro del publicado —se perderían en cada despliegue— y mezclados con los del sitio. El
-nombre lo genera el servidor, nunca el cliente: un nombre que viene de afuera es la vía
-clásica de escribir fuera de la carpeta con `../`.
+### Se guardan en la base, no en disco
+
+Los avatares son filas de la tabla `UserAvatars` y los sirve `AvatarsController`. La
+primera implementación escribía archivos; se cambió al elegir dónde desplegar.
+
+En Cloud Run —y en el plan gratuito de casi cualquier plataforma— **el filesystem del
+contenedor es efímero**: se recrea en cada versión publicada y en cada arranque en frío. Un
+avatar escrito en disco desaparece sin aviso, y el síntoma es de los peores: la aplicación
+funciona, nadie ve un error, y las fotos se borran solas cada tanto.
+
+Guardar binarios en la base no es lo que uno elige por gusto —lo natural es un bucket de
+objetos—, pero acá el costo está acotado y es predecible:
+
+- Cada imagen pesa como máximo el tope de subida, 2 MB.
+- Vive en su **propia tabla**, no en una columna de `AspNetUsers`. Una columna `bytea` ahí
+  viajaría en cada consulta que traiga un usuario —y son casi todas— salvo que cada
+  proyección se acuerde de excluirla.
+- Se lee únicamente cuando alguien pide la imagen.
+
+El identificador de la fila es el que aparece en la URL (`/avatars/{32 hex}.png`), y cambiar
+la foto **crea una fila nueva con otro id**. Eso hace que la URL anterior deje de resolver
+por sí sola, y por lo tanto que estas respuestas se puedan cachear indefinidamente sin
+depender de que ningún intermediario haga caso a una invalidación.
+
+El nombre del archivo nunca lo elige el cliente. Y al servir, el texto de la URL se valida
+contra el formato exacto —32 hexadecimales— antes de tocar la base: no hay riesgo de
+recorrido de directorios porque no hay disco, pero sí de convertir cualquier cadena en una
+consulta.
+
+Si algún día corresponde un bucket, `IAvatarStorage` es la única pieza que cambia.
 
 El tope se comprueba **tres veces**, y no es redundancia: el navegador corta antes de
 gastar la conexión del usuario, `RequestSizeLimit` corta antes de leer el cuerpo, y el
 servicio produce el mensaje que el usuario entiende. Una validación que solo vive en el
 cliente no es una validación.
+
+### El `avatarUrl` se valida como URL absoluta http/https
+
+No es formalismo: ese campo se renderiza en el perfil publico que ve cualquiera, asi que
+un `javascript:` guardado ahi es un XSS almacenado servido a todos los visitantes.
 
 ### Cambiar la contraseña cierra todas las sesiones
 
@@ -946,7 +975,7 @@ sesiones viejas siguieran renovándose, el cambio no serviría para nada.
 |--------|------|------|----------|
 | GET | `/api/home/popular?page=&pageSize=&windowDays=` | publico | Albumes con mas movimiento reciente |
 | GET | `/api/home/explore?page=&pageSize=` | publico | Albumes del catalogo para descubrir |
-| GET | `/api/feed?cursor=&limit=` | Bearer | Actividad de a quienes seguis (fase 10) |
+| GET | `/api/feed?cursor=&limit=` | Bearer | Actividad de a quienes se sigue |
 
 Son **tres endpoints, no uno**. El home los pide en paralelo y pinta cada seccion cuando
 llega la suya; una seccion que falla se queda con su error y las otras siguen en pie. Y
@@ -1085,14 +1114,6 @@ que sincronizar cuando el medio la edita o la baja. Alcanza con la cache en memo
 
 ---
 
-## El avatar
-
-**El `avatarUrl` se valida como URL absoluta http/https.** No es formalismo: ese campo
-se renderiza en el perfil publico que ve cualquiera, asi que un `javascript:` guardado
-ahi es un XSS almacenado servido a todos los visitantes.
-
----
-
 ## Administracion
 
 | Metodo | Ruta | Que hace |
@@ -1210,11 +1231,15 @@ recargar sin cache (`Ctrl` + `Shift` + `R`).
 
 ### Por que HTML y JS sin framework
 
-Esta fase pedia una interfaz **minima pero usable**, sin condicionar la decision real
-de stack que viene despues. Un puñado de modulos ES servidos desde `wwwroot` cumple eso
-sin agregar nada al proyecto: cero build, cero dependencias, cero segundo proceso, cero
-CORS. La fase 2 del frontend queda completamente libre para Angular, y este codigo se
-descarta sin arrastrar deuda.
+El objetivo era una interfaz **completa pero sin peso muerto**. Un puñado de modulos ES
+servidos desde `wwwroot` cumple eso sin agregar nada al proyecto: cero build, cero
+dependencias, cero segundo proceso, cero CORS. El backend es API-first y el cliente
+consume la misma Api publica que consumiria cualquier otro, asi que reemplazarlo por uno
+en Angular o React no toca una linea del servidor.
+
+Lo que en un framework viene resuelto —enrutado, reactividad, listas infinitas,
+autocompletado— aca esta escrito a mano y documentado mas abajo. Es deliberado: el
+proyecto muestra el mecanismo, no la configuracion del mecanismo.
 
 Se usa **hash routing** (`#/album/...`) a proposito: no necesita fallback del servidor
 para las rutas del cliente, asi que `UseStaticFiles` alcanza y no hay que interceptar
@@ -1261,14 +1286,21 @@ por el que la consulta del backend es una sola.
 
 ```
 MusicReviews/
-├── docker-compose.yml            PostgreSQL + pgAdmin
+├── Dockerfile                    Build multi-etapa: SDK para compilar, runtime para servir
+├── docker-compose.yml            PostgreSQL + pgAdmin para desarrollo
+├── .env.example                  Variables que espera el servicio en produccion
+├── .github/workflows/ci.yml      Compilacion, tests e imagen en cada push
 ├── Directory.Build.props         Propiedades comunes a todos los proyectos
 ├── Directory.Packages.props      Versiones centralizadas de paquetes (CPM)
-└── src/
-    ├── MusicReviews.Domain/          Entidades y enums. Sin EF, sin infraestructura.
-    ├── MusicReviews.Application/     Logica de negocio, interfaces de servicios, validadores.
-    ├── MusicReviews.Infrastructure/  DbContext, configuraciones EF, repositorios, clientes HTTP.
-    └── MusicReviews.Api/             Controllers, DTOs, middlewares, composicion.
+├── docs/                         Especificacion tecnica
+├── src/
+│   ├── MusicReviews.Domain/          Entidades y enums. Sin EF, sin infraestructura.
+│   ├── MusicReviews.Application/     Logica de negocio, interfaces de servicios, validadores.
+│   ├── MusicReviews.Infrastructure/  DbContext, configuraciones EF, repositorios, clientes HTTP.
+│   └── MusicReviews.Api/             Controllers, DTOs, middlewares, composicion y frontend.
+└── tests/
+    ├── MusicReviews.UnitTests/         Logica pura, sin base ni red.
+    └── MusicReviews.IntegrationTests/  Api completa contra PostgreSQL en Docker.
 ```
 
 Direccion de las dependencias: `Api → Infrastructure → Application → Domain`.
@@ -1290,6 +1322,7 @@ El Domain no referencia a nadie hacia arriba.
 | `RefreshToken` | `int` | Guarda el hash SHA-256, nunca el token; rotacion con deteccion de reuso |
 | `UserFollow` | `(FollowerId, FollowedId)` | PK compuesta; la relacion es el registro |
 | `Notification` | `int` | `ActorId` nullable para avisos del sistema; `IsRead` + `ReadAt` |
+| `UserAvatar` | `Guid` | Bytes de la foto de perfil; tabla aparte para que no viaje en las consultas de usuario |
 
 ### Indices
 
@@ -1303,6 +1336,7 @@ El Domain no referencia a nadie hacia arriba.
 | `Notifications` | `(RecipientId, CreatedAt DESC, Id DESC)` | Listado paginado por cursor |
 | `Notifications` | `RecipientId` **parcial** `WHERE NOT IsRead` | El contador del globito, sin indexar el historial leido |
 | `Notifications` | `(RecipientId, ActorId, Type, ReviewId, CommentId)` | Encontrar el aviso equivalente para refrescarlo o retirarlo |
+| `UserAvatars` | `UserId` | Encontrar y borrar la foto anterior al reemplazarla |
 
 ---
 
@@ -1344,6 +1378,86 @@ distintas del mismo paquete.
 Postgres normaliza identificadores sin comillas a minusculas, asi que muchos proyectos agregan
 esa dependencia para tener tablas en `snake_case`. Se dejo afuera a proposito: EF genera los
 identificadores entre comillas y funciona sin problemas, y es una dependencia menos que versionar.
+
+---
+
+## Despliegue
+
+La instancia publica corre en **Google Cloud Run** contra **PostgreSQL administrado en
+Neon**. Los pasos completos estan en
+[docs/despliegue-cloud-run.md](docs/despliegue-cloud-run.md); aca queda lo que hay que
+saber para entender el contenedor.
+
+El `Dockerfile` es multi-etapa: compila con el SDK y ejecuta sobre la imagen de runtime de
+Alpine, como usuario sin privilegios y sin compilador ni codigo fuente adentro.
+
+```bash
+docker build -t musicreviews .
+docker run -p 8080:8080 --env-file .env musicreviews
+```
+
+### Lo que la aplicacion espera del entorno
+
+`.env.example` tiene la lista completa. Lo que no es evidente:
+
+| Variable | Por que |
+|----------|---------|
+| `DATABASE_URL` | Las plataformas publican la base como URI (`postgres://...`), formato que Npgsql no acepta. La aplicacion la traduce al arrancar (`DatabaseUrl`), asi que se pega tal cual. |
+| `PORT` | La plataforma elige el puerto. El contenedor escucha ahi y en `0.0.0.0`: en `localhost` el balanceador no lo alcanza y el despliegue queda "unhealthy" sin un solo error en el log. |
+| `Jwt__SigningKey` | Sin valor, la aplicacion no arranca. Es deliberado: una clave por defecto en el codigo es una clave publicada. |
+| `Database__MigrateOnStartup` | En `false` cuando las migraciones se aplican como paso previo al despliegue, que es lo recomendado en Cloud Run. |
+
+### El contenedor no escribe en disco
+
+Es la restriccion que ordena el resto. En Cloud Run —y en el plan gratuito de practicamente
+cualquier plataforma— **el filesystem es efimero**: se recrea en cada version publicada y
+en cada arranque en frio.
+
+Lo unico que un usuario escribe son los avatares, y por eso se guardan **en la base**, en
+su propia tabla. No es lo que uno elegiria con un bucket de objetos disponible, pero el
+sintoma de la alternativa seria de los peores: la aplicacion funciona, nadie ve un error, y
+las fotos de perfil desaparecen solas cada tanto. Ver la seccion de avatares mas arriba.
+
+### Detras del proxy
+
+La peticion llega por http y con la IP del balanceador. `UseForwardedHeaders` va primero
+en el pipeline para que el limitador de peticiones vea la IP real —si no, particiona todo
+el trafico en una sola direccion y castiga a todos juntos— y para que la redireccion a
+https no entre en bucle. `KnownProxies` queda vacio a proposito: en estas plataformas la
+IP del balanceador es dinamica y el unico camino de entrada al contenedor es ese proxy.
+
+### Contenido de demostracion
+
+Una instancia recien desplegada arranca con el catalogo vacio, y el home es un feed: sin
+albumes ni reseñas no muestra nada. Con `Demo__Enabled=true` y `Demo__Password` definida,
+`DemoSeeder` siembra catalogo, seis cuentas, reseñas, hilos y votos. Es idempotente: si las
+cuentas ya existen, no hace nada.
+
+Corre **en segundo plano**, no como paso del arranque: son unas cuarenta peticiones a
+MusicBrainz a una por segundo, y bloquear el arranque durante ese minuto haria que la
+plataforma diera el despliegue por fallido y reiniciara el contenedor, que volveria a
+sembrar desde cero.
+
+Los albumes se resuelven por busqueda y no por MBID escrito a mano, porque un identificador
+equivocado no falla de forma ruidosa: devuelve 404 y deja un catalogo incompleto que nadie
+nota.
+
+> **En Cloud Run la siembra se hace desde la maquina local**, apuntando a la base de Neon.
+> Cloud Run estrangula la CPU del contenedor cuando no esta atendiendo una peticion, asi
+> que un trabajo de fondo de un minuto nunca termina. La guia de despliegue lo detalla.
+
+---
+
+## Integracion continua
+
+`.github/workflows/ci.yml` corre en cada push y cada pull request:
+
+1. **Compilacion y tests unitarios** con `-warnaserror`. Un warning no frena el trabajo en
+   local, pero no llega a `main`.
+2. **Tests de integracion** en un job aparte, porque levantan PostgreSQL con Testcontainers
+   y tardan varias veces mas: asi un error de compilacion se ve en un minuto y no en cinco.
+3. **Imagen de contenedor**, que se compila sin publicarse, para que un `Dockerfile` roto
+   se descubra en el pull request y no en el despliegue.
 
 ---
 
