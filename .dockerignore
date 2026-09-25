@@ -1,0 +1,31 @@
+# Todo lo que no entra al contexto de build. Sin esto se suben bin/ y obj/ del
+# host —cientos de MB— y ademas se corre el riesgo de que las DLL compiladas en
+# Windows terminen dentro de la imagen de Linux.
+**/bin/
+**/obj/
+**/out/
+artifacts/
+
+.git/
+.github/
+.vs/
+.vscode/
+.idea/
+
+tests/
+docs/
+scripts/
+
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+.env
+.env.local
+**/*.pfx
+
+**/logs/
+src/MusicReviews.Api/data/
+
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md

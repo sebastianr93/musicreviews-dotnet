@@ -13,6 +13,17 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+  </ItemGroup>
+
+  <!--
+    Los tests de integracion necesitan volver a registrar la implementacion real de
+    IAvatarStorage, que es internal. Se abre el assembly a ese proyecto en vez de hacer
+    publica la clase: el tipo sigue siendo un detalle de infraestructura, y quien lo
+    necesita es la suite, no los consumidores de la biblioteca.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="MusicReviews.IntegrationTests" />
   </ItemGroup>
 
   <!-- Necesario para que 'dotnet ef migrations add' pueda generar migraciones en este proyecto. -->

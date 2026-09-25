@@ -16,6 +16,8 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.11" />
+    <!-- BackgroundService y AddHostedService, para el sembrador de la demo. -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
   </ItemGroup>
 
   <!-- Proveedor PostgreSQL -->
@@ -39,12 +41,16 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.0.0" />
 
     <!--
-      Testcontainers arrastra SSH.NET 2023.0.0, que tiene una vulnerabilidad de gravedad
-      alta (GHSA-q939-rpr3-3284). Con CentralPackageTransitivePinningEnabled, declarar la
-      version aca fija tambien la dependencia transitiva y silencia NU1903 arreglando el
-      problema, no ocultandolo.
+      Testcontainers arrastra SSH.NET, que acumula vulnerabilidades de gravedad alta.
+      Con CentralPackageTransitivePinningEnabled, declarar la version aca fija tambien la
+      dependencia transitiva: se arregla el problema en vez de silenciar el aviso.
+
+      OJO: este pin hay que revisarlo cada tanto. Se puso en 2024.2.0 para escapar de
+      GHSA-q939-rpr3-3284, y despues el rango de ese mismo aviso se extendio hasta
+      2025.1.0 inclusive y volvio a alcanzarlo. La primera version sana de las dos
+      vulnerabilidades conocidas es 2026.0.0.
     -->
-    <PackageVersion Include="SSH.NET" Version="2024.2.0" />
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
 
   <!-- Logging / documentacion de API -->

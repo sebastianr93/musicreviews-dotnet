@@ -26,6 +26,7 @@ using MusicReviews.Infrastructure.Likes;
 using MusicReviews.Infrastructure.News;
 using MusicReviews.Infrastructure.Notifications;
 using MusicReviews.Infrastructure.Persistence;
+using MusicReviews.Infrastructure.Persistence.Seed;
 using MusicReviews.Infrastructure.Reviews;
 using MusicReviews.Infrastructure.Search;
 using MusicReviews.Infrastructure.Users;
@@ -64,6 +65,7 @@ public static class DependencyInjection
             .AddCatalog(configuration)
             .AddNews(configuration)
             .AddAvatars(configuration)
+            .AddDemoContent(configuration)
             .AddApplicationServices();
 
         return services;
@@ -164,8 +166,30 @@ public static class DependencyInjection
     }
 
     /// <summary>
-    /// Almacenamiento de avatares. La carpeta se crea al guardar el primero, no aca:
-    /// arrancar la aplicacion no deberia tocar el disco por algo que quizas nadie use.
+    /// Registra el sembrador de contenido de demostracion.
+    /// </summary>
+    /// <remarks>
+    /// Se registra siempre y decide en tiempo de ejecucion si tiene algo que hacer.
+    /// Condicionar el registro obligaria a leer la configuracion aca, que es justo lo que
+    /// este archivo no hace (ver el comentario de la clase), y ademas dejaria a los tests
+    /// de integracion con un contenedor distinto del de produccion.
+    /// </remarks>
+    private static IServiceCollection AddDemoContent(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services
+            .AddOptions<DemoOptions>()
+            .Bind(configuration.GetSection(DemoOptions.SectionName));
+
+        services.AddHostedService<DemoSeeder>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Almacenamiento de avatares: los bytes van a la base, no a disco. Ver
+    /// <see cref="DbAvatarStorage"/> para el motivo.
     /// </summary>
     private static IServiceCollection AddAvatars(
         this IServiceCollection services,
@@ -177,7 +201,9 @@ public static class DependencyInjection
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        services.AddSingleton<IAvatarStorage, AvatarStorage>();
+        // Scoped y no Singleton: la implementacion escribe en el DbContext de la
+        // peticion, para que la imagen y el AvatarUrl que la apunta se confirmen juntos.
+        services.AddScoped<IAvatarStorage, DbAvatarStorage>();
 
         return services;
     }

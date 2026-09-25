@@ -1,14 +1,12 @@
 using FluentValidation;
-using Microsoft.AspNetCore.StaticFiles;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.HttpOverrides;
 using MusicReviews.Api.Infrastructure;
 using MusicReviews.Application.Auth.Validators;
+using MusicReviews.Application.Common;
 using MusicReviews.Application.Common.Interfaces;
 using MusicReviews.Infrastructure;
 using MusicReviews.Infrastructure.Persistence;
 using MusicReviews.Infrastructure.Persistence.Seed;
-using MusicReviews.Infrastructure.Users;
 using Scalar.AspNetCore;
 using Serilog;
 
@@ -23,6 +21,10 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
+    // Traduce las convenciones de las plataformas de hosting a las de ASP.NET.
+    // Va antes de registrar nada porque toca la configuracion que despues leen todos.
+    ConfigureHostingPlatform(builder);
+
     // Serilog toma su configuracion de appsettings.json (seccion "Serilog").
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
@@ -35,6 +37,23 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUser, CurrentUser>();
     builder.Services.AddApiRateLimiting();
+
+    // Detras del proxy de la plataforma, la peticion llega por http y con la IP del
+    // balanceador. Sin esto pasan dos cosas: el limitador por IP ve una sola direccion
+    // para todo el trafico —y castiga a todos juntos— y UseHttpsRedirection cree que la
+    // peticion es insegura y responde un redirect a https que vuelve a entrar igual, en
+    // un bucle infinito.
+    //
+    // Se vacian KnownNetworks y KnownProxies porque en estas plataformas la IP del
+    // balanceador es dinamica y no se puede declarar. Es aceptable aca: el unico camino
+    // de entrada al contenedor es el proxy de la plataforma, asi que las cabeceras no
+    // pueden venir de un cliente cualquiera.
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
 
     // Registra todos los validadores del assembly de Application.
     builder.Services.AddValidatorsFromAssemblyContaining<RegisterRequestValidator>();
@@ -65,18 +84,30 @@ try
 
     // ---- Pipeline --------------------------------------------------------
 
-    // Primero de todo: cualquier excepcion no manejada sale como ProblemDetails.
+    // Lo primero de todo: reescribir el esquema y la IP con lo que dice el proxy.
+    // Cualquier middleware que las lea despues —el limitador, la redireccion a https,
+    // el log de peticiones— tiene que ver los valores reales.
+    app.UseForwardedHeaders();
+
     app.UseExceptionHandler();
     app.UseStatusCodePages();
 
     app.UseSerilogRequestLogging();
 
+    var isDevelopment = app.Environment.IsDevelopment();
+
+    if (!isDevelopment && app.Configuration.GetValue("Hosting:HttpsRedirection", true))
+    {
+        // Se puede apagar por configuracion: hay plataformas que ya redirigen en el borde
+        // y no mandan X-Forwarded-Proto, y en esas la redireccion de aca es un bucle.
+        app.UseHttpsRedirection();
+        app.UseHsts();
+    }
+
     // El frontend se sirve desde wwwroot, en el mismo origen que la Api: sin CORS,
     // sin segundo proceso, sin paso de build. UseDefaultFiles hace que "/" resuelva
     // a index.html; va antes que UseStaticFiles porque solo reescribe la ruta.
     app.UseDefaultFiles();
-
-    var isDevelopment = app.Environment.IsDevelopment();
 
     app.UseStaticFiles(new StaticFileOptions
     {
@@ -105,25 +136,17 @@ try
         }
     });
 
-    // Los avatares subidos se sirven desde su propia carpeta, fuera de wwwroot.
-    MapAvatars(app, isDevelopment);
-
-    if (app.Environment.IsDevelopment())
+    // La documentacion queda publica tambien fuera de desarrollo. Es una decision
+    // deliberada y acotada a este proyecto: la Api es publica de lectura y su superficie
+    // es exactamente la que muestra el documento, asi que esconderlo no agrega seguridad
+    // y si quita la forma mas rapida de que alguien entienda que hace el backend.
+    // En un sistema con datos de terceros la decision seria la contraria.
+    if (app.Configuration.GetValue("OpenApi:Expose", true))
     {
         app.MapOpenApi();
         app.MapScalarApiReference(options => options
             .WithTitle("MusicReviews API")
             .WithTheme(ScalarTheme.Purple));
-
-        await DatabaseInitializer.MigrateAsync(app.Services);
-        await IdentitySeeder.SeedAsync(app.Services);
-    }
-    else
-    {
-        // Fuera de desarrollo el perfil siempre expone HTTPS; en local el perfil http
-        // no tiene puerto seguro al que redirigir y el middleware solo loguea un warning.
-        app.UseHttpsRedirection();
-        app.UseHsts();
     }
 
     // Despues de la autenticacion: asi el limitador puede particionar por usuario
@@ -134,6 +157,8 @@ try
     app.UseRateLimiter();
 
     app.MapControllers();
+
+    await InitializeDatabaseAsync(app);
 
     await app.RunAsync();
     return 0;
@@ -149,62 +174,79 @@ finally
 }
 
 /// <summary>
-/// Sirve los avatares subidos desde su carpeta, con las defensas que un archivo de
-/// usuario necesita y los estaticos del sitio no.
+/// Adapta las convenciones de las plataformas de hosting (Railway, Render, Fly, Neon)
+/// a las que espera ASP.NET Core.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Fuera de wwwroot.</b> Ahi adentro los archivos de los usuarios quedarian dentro
-/// del publicado —se perderian en cada despliegue— y mezclados con los del sitio.
+/// <b>PORT.</b> La plataforma elige el puerto y lo pasa por esa variable; el contenedor
+/// tiene que escuchar ahi y en <c>0.0.0.0</c>, no en localhost, o el balanceador no lo
+/// alcanza y el despliegue queda marcado como "unhealthy" sin un solo error en el log.
 /// </para>
 /// <para>
-/// <b>Solo tipos de imagen.</b> Se limpia el mapa de extensiones y se declaran a mano
-/// las cuatro aceptadas. Con el mapa por defecto, cualquier archivo que se colara en la
-/// carpeta se serviria con su tipo "correcto"; con este, lo que no este en la lista no
-/// se sirve en absoluto.
+/// <b>DATABASE_URL.</b> Formato URI, que Npgsql no acepta. Se traduce y se escribe en
+/// <c>ConnectionStrings:DefaultConnection</c>, que es de donde lee el resto de la
+/// aplicacion: asi Infrastructure no se entera de nada de esto.
 /// </para>
 /// <para>
-/// <b>nosniff.</b> Sin esa cabecera, el navegador puede ignorar el Content-Type y
-/// decidir por su cuenta que un archivo es HTML. Servido desde nuestro propio dominio,
-/// eso es un XSS con nuestro origen. La validacion por bytes magicos al subir y esta
-/// cabecera al servir son las dos mitades de la misma defensa.
+/// Las dos son adaptaciones, no configuracion propia: si las variables no estan —el caso
+/// de desarrollo local y el de los tests— la funcion no toca nada.
 /// </para>
 /// </remarks>
-static void MapAvatars(WebApplication app, bool isDevelopment)
+static void ConfigureHostingPlatform(WebApplicationBuilder builder)
 {
-    var options = app.Services.GetRequiredService<IOptions<AvatarOptions>>().Value;
-    var fullPath = Path.GetFullPath(options.StoragePath);
+    var port = Environment.GetEnvironmentVariable("PORT");
 
-    Directory.CreateDirectory(fullPath);
-
-    var contentTypes = new FileExtensionContentTypeProvider(new Dictionary<string, string>
+    if (!string.IsNullOrWhiteSpace(port) && int.TryParse(port, out var parsedPort))
     {
-        [".jpg"] = "image/jpeg",
-        [".jpeg"] = "image/jpeg",
-        [".png"] = "image/png",
-        [".webp"] = "image/webp",
-        [".gif"] = "image/gif"
-    });
+        builder.WebHost.UseUrls($"http://0.0.0.0:{parsedPort}");
+    }
 
-    app.UseStaticFiles(new StaticFileOptions
+    var configured = builder.Configuration.GetConnectionString(DependencyInjection.DefaultConnectionName);
+    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+
+    // La cadena explicita gana: quien la define a mano lo hace para pisar la de la
+    // plataforma, no para que la plataforma lo pise a el.
+    var source = !string.IsNullOrWhiteSpace(configured) ? configured : databaseUrl;
+
+    if (DatabaseUrl.IsUri(source))
     {
-        FileProvider = new PhysicalFileProvider(fullPath),
-        RequestPath = options.RequestPath.TrimEnd('/'),
-        ContentTypeProvider = contentTypes,
-        ServeUnknownFileTypes = false,
-        OnPrepareResponse = context =>
-        {
-            context.Context.Response.Headers.XContentTypeOptions = "nosniff";
+        builder.Configuration[$"ConnectionStrings:{DependencyInjection.DefaultConnectionName}"] =
+            DatabaseUrl.ToConnectionString(source!);
+    }
+    else if (string.IsNullOrWhiteSpace(configured) && !string.IsNullOrWhiteSpace(databaseUrl))
+    {
+        builder.Configuration[$"ConnectionStrings:{DependencyInjection.DefaultConnectionName}"] = databaseUrl;
+    }
+}
 
-            // El nombre del archivo cambia con cada subida, asi que la URL vieja deja de
-            // existir cuando alguien cambia su foto: se puede cachear sin miedo. En
-            // desarrollo igual se revalida, por el mismo motivo que el resto de los
-            // estaticos.
-            context.Context.Response.Headers.CacheControl = isDevelopment
-                ? "no-cache, must-revalidate"
-                : "public, max-age=31536000, immutable";
-        }
-    });
+/// <summary>
+/// Deja la base lista para recibir peticiones: migraciones, roles y, si se pide, el
+/// contenido de demostracion.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Migrar desde el proceso de la aplicacion no es lo que corresponde en un sistema con
+/// varias instancias —dos arrancando a la vez compiten por el mismo lock— ni cuando una
+/// migracion puede tardar minutos. Aca se hace igual, y a proposito: es una sola
+/// instancia, las migraciones son de segundos, y la alternativa —un paso manual despues
+/// de cada despliegue— es la forma mas confiable de que la version nueva del codigo
+/// termine hablando con el esquema viejo.
+/// </para>
+/// <para>
+/// Se puede apagar con <c>Database:MigrateOnStartup=false</c> para el dia en que eso
+/// cambie.
+/// </para>
+/// </remarks>
+static async Task InitializeDatabaseAsync(WebApplication app)
+{
+    if (!app.Configuration.GetValue("Database:MigrateOnStartup", true))
+    {
+        return;
+    }
+
+    await DatabaseInitializer.MigrateAsync(app.Services);
+    await IdentitySeeder.SeedAsync(app.Services);
 }
 
 /// <summary>

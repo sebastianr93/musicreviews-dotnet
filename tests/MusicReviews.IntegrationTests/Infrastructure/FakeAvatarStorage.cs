@@ -6,10 +6,10 @@ namespace MusicReviews.IntegrationTests.Infrastructure;
 /// Guarda los avatares en memoria durante los tests.
 /// </summary>
 /// <remarks>
-/// El almacenamiento real escribe archivos: en una suite eso deja basura en el disco de
-/// quien corre los tests y hace que el resultado dependa de permisos y espacio libre.
-/// Lo que se verifica en los tests de integracion es el flujo —validacion, tope de
-/// tamanio, que el perfil quede apuntando al archivo nuevo—, no que File.Create funcione.
+/// El almacenamiento real escribe filas con hasta dos megas de binario cada una. Lo que
+/// se verifica en los tests de integracion es el flujo —validacion por bytes magicos,
+/// tope de tamanio, que el perfil quede apuntando a la imagen nueva—, no que EF sepa
+/// guardar un bytea.
 /// </remarks>
 internal sealed class FakeAvatarStorage : IAvatarStorage
 {
@@ -20,8 +20,7 @@ internal sealed class FakeAvatarStorage : IAvatarStorage
         CancellationToken cancellationToken = default) =>
         Task.FromResult($"/avatars/{userId:N}-{Guid.NewGuid():N}{ImageSignature.ExtensionFor(format)}");
 
-    public void DeleteIfOwned(string? url)
-    {
+    public Task DeleteIfOwnedAsync(string? url, CancellationToken cancellationToken = default) =>
         // No hay nada que borrar.
-    }
+        Task.CompletedTask;
 }

@@ -16,6 +16,20 @@
       documenten todos empuja exactamente a eso.
     -->
     <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+
+    <!--
+      NU1903 y NU1904 son "el paquete tiene una vulnerabilidad conocida de gravedad alta
+      o critica". Como advertencia se pierde entre el ruido del build; como error hay que
+      mirarla.
+
+      Es deliberado que rompa tambien en local y no solo en CI: el aviso aparece al
+      restaurar, y el workflow restaura sin -warnaserror, asi que un paquete vulnerable
+      podia pasar el CI entero sin que nadie lo viera. Paso exactamente eso con SSH.NET.
+
+      Las de gravedad baja y moderada (NU1901, NU1902) siguen siendo advertencias: no
+      justifican frenar el trabajo.
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);NU1903;NU1904</WarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

@@ -222,7 +222,7 @@ internal sealed class UserService : IUserService
 
         // El anterior se borra DESPUES de guardar: si el guardado falla, el usuario se
         // queda con la foto que tenia y no con ninguna.
-        _avatars.DeleteIfOwned(anterior);
+        await _avatars.DeleteIfOwnedAsync(anterior, cancellationToken);
 
         _logger.LogInformation("Avatar actualizado por {UserId} ({Format})", userId, format);
 
@@ -248,7 +248,7 @@ internal sealed class UserService : IUserService
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        _avatars.DeleteIfOwned(anterior);
+        await _avatars.DeleteIfOwnedAsync(anterior, cancellationToken);
 
         return await BuildProfileAsync(userId, cancellationToken);
     }

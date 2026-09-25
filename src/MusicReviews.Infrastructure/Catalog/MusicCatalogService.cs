@@ -744,10 +744,6 @@ internal sealed class MusicCatalogService : IMusicCatalogService
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Cachea en memoria el resultado crudo de una busqueda. Sin esto, cada tecla que
-    /// el usuario escribe en el buscador consumiria un turno de la cola de 1 req/seg.
-    /// </summary>
-    /// <summary>
     /// Pagina en memoria sobre el lote ya traido y reordenado.
     /// </summary>
     /// <remarks>

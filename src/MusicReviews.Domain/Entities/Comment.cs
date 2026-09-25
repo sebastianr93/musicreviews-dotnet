@@ -5,7 +5,7 @@ namespace MusicReviews.Domain.Entities;
 /// que arma el hilo anidado: null = comentario de primer nivel, con valor = respuesta.
 /// </summary>
 /// <remarks>
-/// Tres decisiones que importan para el armado del arbol (ver seccion 5 de la spec):
+/// Tres decisiones que importan para el armado del arbol (ver docs/especificacion-tecnica.md, seccion 5):
 /// <list type="bullet">
 /// <item><description>
 /// Todo comentario guarda <see cref="ReviewId"/>, incluso las respuestas anidadas a
